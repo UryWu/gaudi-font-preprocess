@@ -62,8 +62,8 @@ function setupEventListeners() {
     window.addEventListener('resize', resizeCanvas);
 
     // 手动旋转按钮
-    rotateLeftBtn.addEventListener('click', () => handleRotate(-1));
-    rotateRightBtn.addEventListener('click', () => handleRotate(+1));
+    rotateLeftBtn.addEventListener('click', () => handleRotate(+1));   // 逆时针
+    rotateRightBtn.addEventListener('click', () => handleRotate(-1));  // 顺时针
     rotateResetBtn.addEventListener('click', handleResetRotation);
 }
 

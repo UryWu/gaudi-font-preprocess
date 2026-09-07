@@ -180,7 +180,7 @@ def upload_image():
 
 @app.route('/api/rotate', methods=['POST'])
 def rotate_image():
-    """手动旋转图片（增量式）"""
+    """手动旋转图片（增量式，不触发识别）"""
     import time
     data = request.get_json()
     image_hash = data.get('hash')
@@ -217,14 +217,6 @@ def rotate_image():
     resized, scale = resize_to_height(binary, TARGET_HEIGHT)
     save_image(resized, processed_path)
 
-    # 重新检测文本框和切割线
-    try:
-        boxes = detect_text_boxes(resized)
-    except Exception as e:
-        print(f"文本框检测失败: {e}")
-        boxes = []
-
-    cut_result = analyze_cut_lines(boxes, resized.shape[1], resized.shape[0])
     print(f"手动旋转: {angle:+.2f}°, hash={image_hash}")
 
     return jsonify({
@@ -234,6 +226,42 @@ def rotate_image():
         'height': resized.shape[0],
         'scale': scale,
         'skew_angle': angle,
+    })
+
+
+@app.route('/api/detect', methods=['POST'])
+def detect_cut_lines():
+    """对当前已处理图片重新检测文本框和切割线"""
+    import time
+    data = request.get_json()
+    image_hash = data.get('hash')
+
+    if not image_hash:
+        return jsonify({'success': False, 'error': '缺少图片哈希'}), 400
+
+    processed_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{image_hash}.png")
+
+    if not os.path.exists(processed_path):
+        return jsonify({'success': False, 'error': '图片不存在，请重新上传'}), 404
+
+    # 加载当前显示图（已经是二值化+缩放后的）
+    img = load_image(processed_path)
+    h, w = img.shape[:2]
+
+    try:
+        boxes = detect_text_boxes(img)
+    except Exception as e:
+        print(f"文本框检测失败: {e}")
+        boxes = []
+
+    cut_result = analyze_cut_lines(boxes, w, h)
+    print(f"重新识别: hash={image_hash}, boxes={len(boxes)}")
+
+    return jsonify({
+        'success': True,
+        'image_url': f'/static/uploads/{image_hash}.png?t={int(time.time())}',
+        'width': w,
+        'height': h,
         'vertical_lines': cut_result['vertical_lines'],
         'horizontal_lines': cut_result['horizontal_lines'],
         'strip_horizontal_lines': cut_result['strip_horizontal_lines'],

@@ -21,7 +21,8 @@ const state = {
     isPanning: false,
     lastMousePos: null,
     showTextBoxes: true,  // 是否显示文本框
-    cumulativeRotation: 0  // 手动旋转累计角度（度）
+    cumulativeRotation: 0,  // 手动旋转累计角度（度）
+    detectionStale: false  // 当前检测结果是否已过期（旋转后未重新识别）
 };
 
 // DOM 元素
@@ -35,6 +36,7 @@ const emptyState = document.getElementById('emptyState');
 const rotateLeftBtn = document.getElementById('rotateLeftBtn');
 const rotateRightBtn = document.getElementById('rotateRightBtn');
 const rotateResetBtn = document.getElementById('rotateResetBtn');
+const detectBtn = document.getElementById('detectBtn');
 const rotationDisplay = document.getElementById('rotationDisplay');
 
 // 初始化
@@ -65,6 +67,7 @@ function setupEventListeners() {
     rotateLeftBtn.addEventListener('click', () => handleRotate(+1));   // 逆时针
     rotateRightBtn.addEventListener('click', () => handleRotate(-1));  // 顺时针
     rotateResetBtn.addEventListener('click', handleResetRotation);
+    detectBtn.addEventListener('click', handleDetect);
 }
 
 function resizeCanvas() {
@@ -161,9 +164,12 @@ async function handleImageUpload(e) {
         rotateLeftBtn.disabled = false;
         rotateRightBtn.disabled = false;
         rotateResetBtn.disabled = true;  // 重置仅在已旋转后才可用
+        detectBtn.disabled = false;
 
         // 重置累计旋转（重新上传 = 全新开始）
         state.cumulativeRotation = 0;
+        state.detectionStale = false;
+        detectBtn.classList.remove('btn-detect-stale');
         updateRotationDisplay();
 
     } catch (error) {
@@ -770,25 +776,20 @@ function toggleTextBoxes() {
     drawCanvas();
 }
 
-// 手动旋转按钮处理
+// 手动旋转按钮处理（仅旋转，不触发识别）
 async function handleRotate(delta) {
     if (!state.imageHash) return;
-    if (state.isRotating) return;  // 防止并发点击
+    if (state.isRotating || state.isDetecting) return;
 
     state.isRotating = true;
-    rotateLeftBtn.disabled = true;
-    rotateRightBtn.disabled = true;
-    rotateResetBtn.disabled = true;
+    setRotateButtonsDisabled(true);
     showLoading('正在旋转...');
 
     try {
         const response = await fetch('/api/rotate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                hash: state.imageHash,
-                angle: delta
-            })
+            body: JSON.stringify({ hash: state.imageHash, angle: delta })
         });
         const data = await response.json();
 
@@ -796,29 +797,24 @@ async function handleRotate(delta) {
             throw new Error(data.error);
         }
 
-        // 累计旋转
         state.cumulativeRotation += delta;
-        updateRotationDisplay();
+        // 旋转后检测结果过期，标记 stale 并清空旧数据
+        markDetectionStale();
 
-        // 更新状态
         state.imageWidth = data.width;
         state.imageHeight = data.height;
-        state.verticalLines = data.vertical_lines || [];
-        state.horizontalLines = data.horizontal_lines || [];
-        state.stripHorizontalLines = data.strip_horizontal_lines || [];
-        state.boxes = data.boxes || [];
         state.zoomLevel = 1;
         state.panOffset = { x: 0, y: 0 };
 
-        // 重置视图并加载新图
         const img = new Image();
         img.onload = () => {
             state.imageObj = img;
             calculateBaseScale();
             drawCanvas();
             updateUI();
+            updateRotationDisplay();
             hideLoading();
-            showToast(`已旋转 ${delta > 0 ? '+' : ''}${delta}°（累计 ${state.cumulativeRotation}°）`);
+            showToast(`已旋转 ${delta > 0 ? '+' : ''}${delta}°（累计 ${state.cumulativeRotation}°，请点识别）`);
         };
         img.onerror = () => {
             hideLoading();
@@ -831,21 +827,18 @@ async function handleRotate(delta) {
         console.error(error);
     } finally {
         state.isRotating = false;
-        rotateLeftBtn.disabled = false;
-        rotateRightBtn.disabled = false;
-        rotateResetBtn.disabled = state.cumulativeRotation === 0;
+        setRotateButtonsDisabled(false);
     }
 }
 
+// 手动重置旋转（恢复为纠偏后状态，不触发识别）
 async function handleResetRotation() {
     if (!state.imageHash) return;
-    if (state.isRotating) return;
+    if (state.isRotating || state.isDetecting) return;
     if (state.cumulativeRotation === 0) return;
 
     state.isRotating = true;
-    rotateLeftBtn.disabled = true;
-    rotateRightBtn.disabled = true;
-    rotateResetBtn.disabled = true;
+    setRotateButtonsDisabled(true);
     showLoading('正在重置...');
 
     try {
@@ -861,14 +854,11 @@ async function handleResetRotation() {
         }
 
         state.cumulativeRotation = 0;
-        updateRotationDisplay();
+        // 重置后也是新图像，需要重新检测
+        markDetectionStale();
 
         state.imageWidth = data.width;
         state.imageHeight = data.height;
-        state.verticalLines = data.vertical_lines || [];
-        state.horizontalLines = data.horizontal_lines || [];
-        state.stripHorizontalLines = data.strip_horizontal_lines || [];
-        state.boxes = data.boxes || [];
         state.zoomLevel = 1;
         state.panOffset = { x: 0, y: 0 };
 
@@ -878,8 +868,9 @@ async function handleResetRotation() {
             calculateBaseScale();
             drawCanvas();
             updateUI();
+            updateRotationDisplay();
             hideLoading();
-            showToast('已重置为纠偏后状态');
+            showToast('已重置为纠偏后状态，请点识别');
         };
         img.onerror = () => {
             hideLoading();
@@ -892,13 +883,70 @@ async function handleResetRotation() {
         console.error(error);
     } finally {
         state.isRotating = false;
-        rotateLeftBtn.disabled = false;
-        rotateRightBtn.disabled = false;
-        rotateResetBtn.disabled = true;
+        setRotateButtonsDisabled(false);
+    }
+}
+
+// 识别按钮：对当前旋转重新检测文本框和切割线
+async function handleDetect() {
+    if (!state.imageHash) return;
+    if (state.isRotating || state.isDetecting) return;
+
+    state.isDetecting = true;
+    setRotateButtonsDisabled(true);
+    detectBtn.disabled = true;
+    showLoading('正在识别文本框和切割线...');
+
+    try {
+        const response = await fetch('/api/detect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: state.imageHash })
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error);
+        }
+
+        state.verticalLines = data.vertical_lines || [];
+        state.horizontalLines = data.horizontal_lines || [];
+        state.stripHorizontalLines = data.strip_horizontal_lines || [];
+        state.boxes = data.boxes || [];
+        state.detectionStale = false;
+        detectBtn.classList.remove('btn-detect-stale');
+
+        drawCanvas();
+        updateUI();
+        hideLoading();
+        showToast(`识别完成：${state.boxes.length} 个文本框`);
+    } catch (error) {
+        hideLoading();
+        showToast('识别失败: ' + error.message);
+        console.error(error);
+    } finally {
+        state.isDetecting = false;
+        setRotateButtonsDisabled(false);
+        detectBtn.disabled = false;
     }
 }
 
 function updateRotationDisplay() {
     rotationDisplay.textContent = `${state.cumulativeRotation}°`;
     rotateResetBtn.disabled = state.cumulativeRotation === 0;
+}
+
+function markDetectionStale() {
+    state.detectionStale = true;
+    state.verticalLines = [];
+    state.horizontalLines = [];
+    state.stripHorizontalLines = [];
+    state.boxes = [];
+    detectBtn.classList.add('btn-detect-stale');
+}
+
+function setRotateButtonsDisabled(disabled) {
+    rotateLeftBtn.disabled = disabled;
+    rotateRightBtn.disabled = disabled;
+    rotateResetBtn.disabled = disabled || state.cumulativeRotation === 0;
 }

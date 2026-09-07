@@ -324,6 +324,11 @@ function handleMouseDown(e) {
         state.selectedStripIndex = lineInfo.stripIndex;  // 存储列索引
         state.isDragging = true;
         canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
+    } else {
+        // 空白处：开始平移图片
+        state.isPanning = true;
+        state.lastMousePos = pos;
+        canvas.style.cursor = 'grabbing';
     }
 }
 
@@ -385,7 +390,7 @@ function handleMouseMove(e) {
         if (lineInfo) {
             canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
         } else {
-            canvas.style.cursor = 'crosshair';
+            canvas.style.cursor = 'grab';
         }
     }
 }
@@ -396,7 +401,7 @@ function handleMouseUp(e) {
     state.selectedLine = null;
     state.lineType = null;
     state.lastMousePos = null;
-    canvas.style.cursor = 'crosshair';
+    canvas.style.cursor = 'grab';
 }
 
 function handleDoubleClick(e) {

@@ -316,8 +316,8 @@ function handleMouseDown(e) {
     if (lineInfo && e.altKey) {
         // Alt+点击删除切割线
         deleteLine(lineInfo);
-    } else if (lineInfo) {
-        // 开始拖动切割线
+    } else if (lineInfo && !e.ctrlKey) {
+        // 开始拖动切割线（按住 Ctrl 时跳过，强制平移）
         state.selectedLine = lineInfo.lineIndex !== undefined ? lineInfo.lineIndex : lineInfo.index;
         state.lineType = lineInfo.type;
         state.selectedLineValue = lineInfo.yValue;
@@ -325,7 +325,7 @@ function handleMouseDown(e) {
         state.isDragging = true;
         canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
     } else {
-        // 空白处：开始平移图片
+        // 空白处 或 Ctrl+点击任意位置：开始平移图片
         state.isPanning = true;
         state.lastMousePos = pos;
         canvas.style.cursor = 'grabbing';
@@ -386,11 +386,15 @@ function handleMouseMove(e) {
         updateUI();
     } else {
         // 检查是否靠近切割线，更新光标
-        const lineInfo = findNearestLine(pos);
-        if (lineInfo) {
-            canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
-        } else {
+        if (e.ctrlKey) {
             canvas.style.cursor = 'grab';
+        } else {
+            const lineInfo = findNearestLine(pos);
+            if (lineInfo) {
+                canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
+            } else {
+                canvas.style.cursor = 'grab';
+            }
         }
     }
 }

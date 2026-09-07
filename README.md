@@ -89,10 +89,13 @@
 git clone https://github.com/gaudi1209/gaudi-font-preprocess.git
 cd gaudi-font-preprocess
 
-# 安装依赖
+# 推荐：使用 uv（自动创建虚拟环境并安装依赖）
+uv sync
+
+# 或：使用 pip
 pip install -r requirements.txt
 
-# 启动
+# 启动（推荐双击 启动.bat）
 python app.py
 ```
 

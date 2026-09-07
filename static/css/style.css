@@ -128,6 +128,64 @@ body {
     accent-color: #4a90a4;
 }
 
+.rotate-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.rotate-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-rotate,
+.btn-reset {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: #f8f8f8;
+    color: #333;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-rotate:hover:not(:disabled),
+.btn-reset:hover:not(:disabled) {
+    background-color: #e8e8e8;
+    border-color: #999;
+}
+
+.btn-rotate:disabled,
+.btn-reset:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-reset {
+    background-color: #fff5f5;
+    border-color: #e8c5c5;
+    color: #c0392b;
+}
+
+.btn-reset:hover:not(:disabled) {
+    background-color: #ffe8e8;
+    border-color: #c0392b;
+}
+
+.rotate-info {
+    font-size: 12px;
+    color: #666;
+    margin: 0;
+}
+
+.rotate-info span {
+    font-weight: 600;
+    color: #4a90a4;
+}
+
 .panel-section {
     margin-bottom: 20px;
 }

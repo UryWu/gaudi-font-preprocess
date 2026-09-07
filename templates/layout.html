@@ -41,6 +41,18 @@
         </div>
 
         <div class="panel-section">
+            <h3>手动调整</h3>
+            <div class="rotate-controls">
+                <div class="rotate-buttons">
+                    <button id="rotateLeftBtn" class="btn-rotate" disabled title="逆时针旋转1度">↺ 1°</button>
+                    <button id="rotateRightBtn" class="btn-rotate" disabled title="顺时针旋转1度">1° ↻</button>
+                    <button id="rotateResetBtn" class="btn-reset" disabled title="撤销所有手动旋转">重置</button>
+                </div>
+                <p class="rotate-info">当前累计旋转：<span id="rotationDisplay">0°</span></p>
+            </div>
+        </div>
+
+        <div class="panel-section">
             <h3>图片信息</h3>
             <div id="imageInfo" class="info-box">
                 <p>宽度: <span id="imgWidth">-</span> px</p>
@@ -76,5 +88,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=11"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=12"></script>
 {% endblock %}

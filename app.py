@@ -97,6 +97,12 @@ def upload_image():
         skew_angle = 0.0
         print("倾斜校正: 已禁用")
 
+    # 保存原图和纠偏后原图（手动旋转重置用）
+    original_copy_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{file_hash}_original.png")
+    save_image(img, original_copy_path)
+    base_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{file_hash}_base.png")
+    save_image(img, base_path)
+
     # 转换为二值图
     binary = to_binary(img)
 
@@ -169,6 +175,119 @@ def upload_image():
         'strip_horizontal_lines': cut_result['strip_horizontal_lines'],
         'boxes': boxes,
         'has_saved_session': False
+    })
+
+
+@app.route('/api/rotate', methods=['POST'])
+def rotate_image():
+    """手动旋转图片（增量式）"""
+    import time
+    data = request.get_json()
+    image_hash = data.get('hash')
+    angle = float(data.get('angle', 0))
+
+    if not image_hash:
+        return jsonify({'success': False, 'error': '缺少图片哈希'}), 400
+
+    base_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{image_hash}_base.png")
+    processed_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{image_hash}.png")
+
+    if not os.path.exists(base_path):
+        return jsonify({'success': False, 'error': '基准图不存在，请重新上传'}), 404
+
+    if abs(angle) < 0.01:
+        return jsonify({'success': False, 'error': '角度为零'}), 400
+
+    # 从彩色基准图旋转（避免对二值图旋转产生灰边）
+    img = load_image(base_path)
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    rotated = cv2.warpAffine(
+        img, M, (w, h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255)
+    )
+
+    # 覆盖彩色基准图（累积旋转）
+    save_image(rotated, base_path)
+
+    # 二值化 + 缩放，覆盖显示图
+    binary = to_binary(rotated)
+    resized, scale = resize_to_height(binary, TARGET_HEIGHT)
+    save_image(resized, processed_path)
+
+    # 重新检测文本框和切割线
+    try:
+        boxes = detect_text_boxes(resized)
+    except Exception as e:
+        print(f"文本框检测失败: {e}")
+        boxes = []
+
+    cut_result = analyze_cut_lines(boxes, resized.shape[1], resized.shape[0])
+    print(f"手动旋转: {angle:+.2f}°, hash={image_hash}")
+
+    return jsonify({
+        'success': True,
+        'image_url': f'/static/uploads/{image_hash}.png?t={int(time.time())}',
+        'width': resized.shape[1],
+        'height': resized.shape[0],
+        'scale': scale,
+        'skew_angle': angle,
+        'vertical_lines': cut_result['vertical_lines'],
+        'horizontal_lines': cut_result['horizontal_lines'],
+        'strip_horizontal_lines': cut_result['strip_horizontal_lines'],
+        'boxes': boxes,
+    })
+
+
+@app.route('/api/reset_image', methods=['POST'])
+def reset_image():
+    """重置为纠偏后、未手动旋转的基准状态"""
+    import time
+    data = request.get_json()
+    image_hash = data.get('hash')
+
+    if not image_hash:
+        return jsonify({'success': False, 'error': '缺少图片哈希'}), 400
+
+    base_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{image_hash}_base.png")
+    original_copy_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{image_hash}_original.png")
+    processed_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{image_hash}.png")
+
+    if not os.path.exists(original_copy_path):
+        return jsonify({'success': False, 'error': '原图不存在，请重新上传'}), 404
+
+    # 用原图重新覆盖基准图（丢弃手动旋转）
+    import shutil
+    shutil.copy(original_copy_path, base_path)
+
+    # 重新二值化 + 缩放 + 检测
+    img = load_image(base_path)
+    binary = to_binary(img)
+    resized, scale = resize_to_height(binary, TARGET_HEIGHT)
+    save_image(resized, processed_path)
+
+    try:
+        boxes = detect_text_boxes(resized)
+    except Exception as e:
+        print(f"文本框检测失败: {e}")
+        boxes = []
+
+    cut_result = analyze_cut_lines(boxes, resized.shape[1], resized.shape[0])
+    print(f"重置图片: hash={image_hash}")
+
+    return jsonify({
+        'success': True,
+        'image_url': f'/static/uploads/{image_hash}.png?t={int(time.time())}',
+        'width': resized.shape[1],
+        'height': resized.shape[0],
+        'scale': scale,
+        'skew_angle': 0.0,
+        'vertical_lines': cut_result['vertical_lines'],
+        'horizontal_lines': cut_result['horizontal_lines'],
+        'strip_horizontal_lines': cut_result['strip_horizontal_lines'],
+        'boxes': boxes,
     })
 
 

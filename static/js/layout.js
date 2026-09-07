@@ -91,6 +91,9 @@ async function handleImageUpload(e) {
 
     const formData = new FormData();
     formData.append('image', file);
+    // 传递纠偏开关状态
+    const deskewToggle = document.getElementById('deskewToggle');
+    formData.append('deskew', deskewToggle && deskewToggle.checked ? '1' : '0');
 
     try {
         const response = await fetch('/api/upload', {
@@ -129,6 +132,9 @@ async function handleImageUpload(e) {
 
             if (data.has_saved_session) {
                 showToast('已加载保存的切割线配置');
+            }
+            if (data.skew_angle !== undefined && Math.abs(data.skew_angle) > 0.1) {
+                showToast(`已自动纠偏 ${data.skew_angle.toFixed(2)}°`);
             }
         };
         img.src = data.image_url;

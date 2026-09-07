@@ -16,6 +16,10 @@
     <div class="panel">
         <div class="panel-header">
             <h2>图片预处理</h2>
+            <label class="checkbox-label" title="上传时自动校正图片倾斜">
+                <input type="checkbox" id="deskewToggle" checked>
+                <span>启用纠偏</span>
+            </label>
             <input type="file" id="imageInput" accept="image/*" style="display: none;">
             <button id="uploadBtn" class="btn btn-primary">上传图片</button>
         </div>
@@ -32,6 +36,7 @@
                 <p><span style="color: #e74c3c;">红色线</span> = 纵向切割</p>
                 <p><span style="color: #3498db;">蓝色线</span> = 横向切割</p>
                 <p><span style="color: #2ecc71;">绿色虚线</span> = 文本框</p>
+                <p><strong>纠偏：</strong>上传时自动校正倾斜，检测到的角度会以 toast 提示（标题栏可关闭）</p>
             </div>
         </div>
 
@@ -71,5 +76,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=10"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=11"></script>
 {% endblock %}

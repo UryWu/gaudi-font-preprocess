@@ -14,7 +14,7 @@ if getattr(sys, 'frozen', False):
 else:
     RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-from utils.image_processor import load_image, to_binary, resize_to_height, compute_hash, save_image, get_image_info
+from utils.image_processor import load_image, to_binary, resize_to_height, compute_hash, save_image, get_image_info, deskew
 from utils.ocr_handler import detect_text_boxes
 from utils.cut_analyzer import analyze_cut_lines
 from utils.storage import save_session, load_session
@@ -87,6 +87,16 @@ def upload_image():
     img = load_image(original_path)
     original_height, original_width = img.shape[:2]
 
+    # 自动纠偏（可选）
+    deskew_enabled = request.form.get('deskew', '1') == '1'
+    if deskew_enabled:
+        img, skew_angle = deskew(img)
+        if abs(skew_angle) > 0.1:
+            print(f"倾斜校正: {skew_angle:.2f}°")
+    else:
+        skew_angle = 0.0
+        print("倾斜校正: 已禁用")
+
     # 转换为二值图
     binary = to_binary(img)
 
@@ -126,6 +136,7 @@ def upload_image():
             'width': resized_width,
             'height': resized_height,
             'scale': scale,
+            'skew_angle': skew_angle,
             'vertical_lines': session_data.get('vertical_lines', []),
             'horizontal_lines': session_data.get('horizontal_lines', []),
             'strip_horizontal_lines': session_data.get('strip_horizontal_lines', []),
@@ -152,6 +163,7 @@ def upload_image():
         'width': resized_width,
         'height': resized_height,
         'scale': scale,
+        'skew_angle': skew_angle,
         'vertical_lines': cut_result['vertical_lines'],
         'horizontal_lines': cut_result['horizontal_lines'],
         'strip_horizontal_lines': cut_result['strip_horizontal_lines'],

@@ -22,7 +22,10 @@ const state = {
     lastMousePos: null,
     showTextBoxes: true,  // 是否显示文本框
     cumulativeRotation: 0,  // 手动旋转累计角度（度）
-    detectionStale: false  // 当前检测结果是否已过期（旋转后未重新识别）
+    detectionStale: false,  // 当前检测结果是否已过期（旋转后未重新识别）
+    useRedLines: true,   // 切割：参与红/蓝网格
+    useBlueLines: true,
+    useGreenBoxes: false  // 切割：参与绿框直接切割
 };
 
 // DOM 元素
@@ -38,6 +41,9 @@ const rotateRightBtn = document.getElementById('rotateRightBtn');
 const rotateResetBtn = document.getElementById('rotateResetBtn');
 const detectBtn = document.getElementById('detectBtn');
 const rotationDisplay = document.getElementById('rotationDisplay');
+const useRedLinesToggle = document.getElementById('useRedLinesToggle');
+const useBlueLinesToggle = document.getElementById('useBlueLinesToggle');
+const useGreenBoxesToggle = document.getElementById('useGreenBoxesToggle');
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -68,6 +74,19 @@ function setupEventListeners() {
     rotateRightBtn.addEventListener('click', () => handleRotate(-1));  // 顺时针
     rotateResetBtn.addEventListener('click', handleResetRotation);
     detectBtn.addEventListener('click', handleDetect);
+
+    // 切割来源勾选框
+    if (useRedLinesToggle) {
+        useRedLinesToggle.addEventListener('change', e => {
+            state.useRedLines = e.target.checked;
+        });
+        useBlueLinesToggle.addEventListener('change', e => {
+            state.useBlueLines = e.target.checked;
+        });
+        useGreenBoxesToggle.addEventListener('change', e => {
+            state.useGreenBoxes = e.target.checked;
+        });
+    }
 }
 
 function resizeCanvas() {
@@ -732,6 +751,11 @@ async function saveCutLines() {
 async function applyCut() {
     if (!state.imageHash) return;
 
+    if (!state.useRedLines && !state.useBlueLines && !state.useGreenBoxes) {
+        showToast('请至少勾选一个切割来源');
+        return;
+    }
+
     showLoading('正在切割图片...');
 
     try {
@@ -742,7 +766,11 @@ async function applyCut() {
                 hash: state.imageHash,
                 vertical_lines: state.verticalLines,
                 horizontal_lines: state.horizontalLines,
-                strip_horizontal_lines: state.stripHorizontalLines
+                strip_horizontal_lines: state.stripHorizontalLines,
+                boxes: state.boxes,
+                use_red: state.useRedLines,
+                use_blue: state.useBlueLines,
+                use_green: state.useGreenBoxes,
             })
         });
         const data = await response.json();

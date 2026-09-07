@@ -358,13 +358,43 @@ def api_load_session(image_hash):
         return jsonify({'success': False, 'error': '会话不存在'})
 
 
+def _dedupe_contained(regions):
+    """
+    去重：如果一个 region 被另一个完全包含，保留较小的（更紧的字符边界）。
+    绿框通常比网格单元更紧，所以"框在格子里"的情况保留框、丢弃格。
+    """
+    kept = []
+    for r in regions:
+        area_r = (r['x2'] - r['x1']) * (r['y2'] - r['y1'])
+        contained_index = None
+        for i, k in enumerate(kept):
+            if (r['x1'] >= k['x1'] and r['y1'] >= k['y1'] and
+                    r['x2'] <= k['x2'] and r['y2'] <= k['y2']):
+                contained_index = i
+                break
+        if contained_index is not None:
+            area_k = (kept[contained_index]['x2'] - kept[contained_index]['x1']) * (
+                kept[contained_index]['y2'] - kept[contained_index]['y1'])
+            if area_r < area_k:
+                kept[contained_index] = r
+            # 否则 r 被丢弃（k 较小更精确）
+        else:
+            kept.append(r)
+    return kept
+
+
 @app.route('/api/apply_cuts', methods=['POST'])
 def apply_cuts():
-    """应用切割，保存切割结果"""
+    """应用切割，保存切割结果。支持红/蓝/绿三种来源任意组合。"""
     data = request.get_json()
     image_hash = data.get('hash')
     vertical_lines = data.get('vertical_lines', [])
     strip_horizontal_lines = data.get('strip_horizontal_lines', [])
+    boxes = data.get('boxes', [])
+
+    use_red = data.get('use_red', True)
+    use_blue = data.get('use_blue', True)
+    use_green = data.get('use_green', False)
 
     if not image_hash:
         return jsonify({'error': '缺少图片哈希'}), 400
@@ -380,78 +410,81 @@ def apply_cuts():
     output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
     os.makedirs(output_dir, exist_ok=True)
 
-    # 按列切割图片
-    cut_images = []
-    idx = 0
+    # 收集所有候选切割区域（含来源标记）
+    regions = []  # [{x1, y1, x2, y2, source}, ...]
 
-    if strip_horizontal_lines and len(strip_horizontal_lines) > 0:
-        # 使用按列分组的横向切割线
+    # 来源 1：红色 × 蓝色网格
+    if use_red and use_blue and strip_horizontal_lines and len(strip_horizontal_lines) > 0:
         for strip_info in strip_horizontal_lines:
-            strip_index = strip_info.get('strip_index', 0)
             x_start = strip_info.get('x_start', 0)
             x_end = strip_info.get('x_end', 0)
             h_lines = strip_info.get('horizontal_lines', [])
-
             for i in range(len(h_lines) - 1):
-                y1 = h_lines[i]
-                y2 = h_lines[i + 1]
-
-                # 切割
-                piece = img[y1:y2, x_start:x_end]
-
-                # 检测是否为空切片
-                is_empty, text_ratio, _ = detect_empty_slice(piece, threshold=0.05)
-
-                # 保存
-                piece_filename = f"char_{idx:04d}.png"
-                piece_path = os.path.join(output_dir, piece_filename)
-                save_image(piece, piece_path)
-
-                cut_images.append({
-                    'index': idx,
-                    'strip_index': strip_index,
-                    'char_index': i,
-                    'filename': piece_filename,
-                    'x': x_start, 'y': y1,
-                    'width': x_end - x_start,
-                    'height': y2 - y1,
-                    'is_empty': is_empty,
-                    'text_ratio': round(text_ratio, 4)
+                regions.append({
+                    'x1': x_start, 'y1': h_lines[i],
+                    'x2': x_end,   'y2': h_lines[i + 1],
+                    'source': 'grid'
                 })
-                idx += 1
-    else:
+    elif use_red and use_blue:
         # 兼容旧数据：使用全局横向切割线
         horizontal_lines = data.get('horizontal_lines', [])
         for i in range(len(horizontal_lines) - 1):
             for j in range(len(vertical_lines) - 1):
-                y1 = horizontal_lines[i]
-                y2 = horizontal_lines[i + 1]
-                x1 = vertical_lines[j]
-                x2 = vertical_lines[j + 1]
-
-                # 切割
-                piece = img[y1:y2, x1:x2]
-
-                # 检测是否为空切片
-                is_empty, text_ratio, _ = detect_empty_slice(piece, threshold=0.05)
-
-                # 保存
-                piece_filename = f"char_{idx:04d}.png"
-                piece_path = os.path.join(output_dir, piece_filename)
-                save_image(piece, piece_path)
-
-                cut_images.append({
-                    'index': idx,
-                    'strip_index': j,
-                    'char_index': i,
-                    'filename': piece_filename,
-                    'x': x1, 'y': y1,
-                    'width': x2 - x1,
-                    'height': y2 - y1,
-                    'is_empty': is_empty,
-                    'text_ratio': round(text_ratio, 4)
+                regions.append({
+                    'x1': vertical_lines[j], 'y1': horizontal_lines[i],
+                    'x2': vertical_lines[j + 1], 'y2': horizontal_lines[i + 1],
+                    'source': 'grid'
                 })
-                idx += 1
+
+    # 来源 2：绿色文本框
+    if use_green and boxes:
+        for box in boxes:
+            regions.append({
+                'x1': box['x_min'], 'y1': box['y_min'],
+                'x2': box['x_max'], 'y2': box['y_max'],
+                'source': 'box'
+            })
+
+    if not regions:
+        return jsonify({'success': False, 'error': '没有勾选任何切割来源'}), 400
+
+    # 重叠去重：完全包含时保留较小的（更紧的边界）
+    regions = _dedupe_contained(regions)
+
+    # 切割并保存
+    cut_images = []
+    for idx, r in enumerate(regions):
+        # 安全裁剪到图片边界
+        x1 = max(0, r['x1'])
+        y1 = max(0, r['y1'])
+        x2 = min(img.shape[1], r['x2'])
+        y2 = min(img.shape[0], r['y2'])
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        piece = img[y1:y2, x1:x2]
+
+        # 检测是否为空切片
+        is_empty, text_ratio, _ = detect_empty_slice(piece, threshold=0.05)
+
+        # 保存
+        piece_filename = f"char_{idx:04d}.png"
+        piece_path = os.path.join(output_dir, piece_filename)
+        save_image(piece, piece_path)
+
+        cut_images.append({
+            'index': idx,
+            'filename': piece_filename,
+            'x': x1, 'y': y1,
+            'width': x2 - x1,
+            'height': y2 - y1,
+            'is_empty': is_empty,
+            'text_ratio': round(text_ratio, 4),
+            'source': r['source']  # 'grid' or 'box'
+        })
+
+    print(f"应用切割: hash={image_hash}, use_red={use_red}, use_blue={use_blue}, use_green={use_green}, "
+          f"共 {len(cut_images)} 片")
 
     return jsonify({
         'success': True,

@@ -126,7 +126,8 @@ function createCharCard(char, displayIndex) {
     // 图片
     const img = document.createElement('img');
     img.className = 'char-image';
-    img.src = char.image_url;
+    // 兼容老数据：image_url 缺失时根据 hash + filename 构造
+    img.src = char.image_url || `/output/${state.imageHash}/${char.filename}`;
     img.alt = `字符 ${displayIndex + 1}`;
 
     // 状态标签

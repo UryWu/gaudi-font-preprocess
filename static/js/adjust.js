@@ -175,9 +175,24 @@ function createCharCard(char, displayIndex) {
     return card;
 }
 
-// 删除字符（无 confirm，由右键菜单直接调用）
-function deleteCharacter(char, displayIndex) {
-    char.deleted = true;
+// 删除字符（无 confirm，由右键菜单直接调用；同时删本地文件）
+async function deleteCharacter(char, displayIndex) {
+    try {
+        const r = await fetch('/api/delete_characters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: state.imageHash,
+                filenames: [char.filename]
+            })
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+    } catch (err) {
+        showToast('删除失败: ' + err.message);
+        return;
+    }
+    // 客户端：移除并重绘
     const index = state.characters.indexOf(char);
     if (index > -1) {
         state.characters.splice(index, 1);

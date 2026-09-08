@@ -1085,9 +1085,11 @@ def open_directory():
 # 静态文件服务 - 输出目录
 @app.route('/output/<path:filename>')
 def serve_output(filename):
-    """提供输出文件访问"""
+    """提供输出文件访问（强缓存 1 年：文件名带 hash+序号，唯一）"""
     from flask import send_from_directory
-    return send_from_directory(OUTPUT_FOLDER, filename)
+    response = send_from_directory(OUTPUT_FOLDER, filename)
+    response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return response
 
 
 # ==================== 标注出图 API ====================

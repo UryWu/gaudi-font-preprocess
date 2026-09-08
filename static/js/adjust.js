@@ -135,7 +135,7 @@ function createCharCard(char, displayIndex) {
     // 兼容老数据：image_url 缺失时根据 hash + filename 构造
     // 追加时间戳防止浏览器缓存重剪后的同名 PNG
     const baseUrl = char.image_url || `/output/${state.imageHash}/${char.filename}`;
-    img.src = `${baseUrl}?t=${Date.now()}`;
+    img.src = baseUrl;
     img.alt = `字符 ${displayIndex + 1}`;
 
     // 状态标签
@@ -420,6 +420,21 @@ function loadCharToCanvas(char) {
     // 保存当前字符到状态
     canvasState.char = char;
 
+    // 显示加载指示（图片可能几百 KB，Flask 渲染需要时间）
+    const wrap = canvas.parentElement;
+    let loadingEl = wrap.querySelector('.canvas-loading');
+    if (!loadingEl) {
+        loadingEl = document.createElement('div');
+        loadingEl.className = 'canvas-loading';
+        loadingEl.textContent = '加载中…';
+        loadingEl.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#999;font-size:14px;background:rgba(255,255,255,0.7);z-index:5;';
+        wrap.style.position = 'relative';
+        wrap.appendChild(loadingEl);
+    }
+    loadingEl.style.display = 'flex';
+
+    // 稳定 cache key：文件名不变时复用浏览器缓存；重剪/画笔后递增版本强制刷新
+    const cacheKey = `${char.image_url}?v=${char.cache_version || 0}`;
     const img = new Image();
     img.onload = () => {
         // 保存图片对象
@@ -440,12 +455,15 @@ function loadCharToCanvas(char) {
 
         // 绘制图片和边框
         redrawCanvas();
+        loadingEl.style.display = 'none';
 
         // 设置canvas事件监听
         setupCanvasEvents(canvas);
     };
-    // 加 cache buster 防止浏览器缓存重剪后的同名 PNG
-    img.src = `${char.image_url}?t=${Date.now()}`;
+    img.onerror = () => {
+        loadingEl.textContent = '加载失败';
+    };
+    img.src = cacheKey;
 }
 
 // 重绘Canvas
@@ -922,9 +940,11 @@ function applyAdjust() {
         canvasState.char.adjust_left = parseInt(document.getElementById('adjustLeft').value) || 0;
         canvasState.char.adjust_right = parseInt(document.getElementById('adjustRight').value) || 0;
         canvasState.char.needs_adjust = false;
+        // 调整值已变（即使是 0→0 也要标记，因为重新打开 modal 会重画），触发重渲染
+        canvasState.char.cache_version = (canvasState.char.cache_version || 0) + 1;
     }
 
-    // 重新加载 canvas
+    // 重新加载 canvas（cache_key 用 cache_version，复用浏览器缓存）
     redrawCanvas();
     showToast('调整已应用');
 }

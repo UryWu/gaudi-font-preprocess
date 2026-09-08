@@ -136,6 +136,7 @@ function createCharCard(char, displayIndex) {
     // 追加时间戳防止浏览器缓存重剪后的同名 PNG
     const baseUrl = char.image_url || `/output/${state.imageHash}/${char.filename}`;
     img.src = baseUrl;
+    img.title = char.filename || '';
     img.alt = `字符 ${displayIndex + 1}`;
 
     // 状态标签

@@ -87,7 +87,8 @@
             <div id="cutStats" class="info-box">
                 <p>纵向切割线: <span id="vLineCount">0</span> 条</p>
                 <p>横向切割线: <span id="hLineCount">0</span> 条</p>
-                <p>预计切割: <span id="totalPieces">0</span> 个</p>
+                <p>绿色文本框: <span id="boxCount">0</span> 个</p>
+                <p>预计切割: <span id="totalPieces">0</span> 个 <span class="stats-hint" id="totalPiecesHint"></span></p>
             </div>
         </div>
 
@@ -109,5 +110,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=14"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=15"></script>
 {% endblock %}

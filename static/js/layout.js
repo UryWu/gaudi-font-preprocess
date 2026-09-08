@@ -79,12 +79,15 @@ function setupEventListeners() {
     if (useRedLinesToggle) {
         useRedLinesToggle.addEventListener('change', e => {
             state.useRedLines = e.target.checked;
+            updateUI();
         });
         useBlueLinesToggle.addEventListener('change', e => {
             state.useBlueLines = e.target.checked;
+            updateUI();
         });
         useGreenBoxesToggle.addEventListener('change', e => {
             state.useGreenBoxes = e.target.checked;
+            updateUI();
         });
     }
 }
@@ -709,9 +712,36 @@ function deleteLine(lineInfo) {
 }
 
 function updateUI() {
-    document.getElementById('vLineCount').textContent = state.verticalLines.length;
-    document.getElementById('hLineCount').textContent = state.horizontalLines.length;
-    const pieces = Math.max(0, (state.verticalLines.length - 1) * (state.horizontalLines.length - 1));
+    const vCount = state.verticalLines.length;
+    const hCount = state.horizontalLines.length;
+    const bCount = state.boxes.length;
+
+    document.getElementById('vLineCount').textContent = vCount;
+    document.getElementById('hLineCount').textContent = hCount;
+    document.getElementById('boxCount').textContent = bCount;
+
+    // 根据三色勾选状态计算预计切割
+    // 网格：仅在红+蓝同时勾选时贡献 = (v-1) * (h-1)
+    // 绿框：勾选时贡献 = boxes 数（实际会去重，客户端做粗估）
+    let pieces = 0;
+    const gridOn = state.useRedLines && state.useBlueLines;
+    if (gridOn) {
+        pieces += Math.max(0, (vCount - 1) * (hCount - 1));
+    }
+    if (state.useGreenBoxes) {
+        pieces += bCount;
+    }
+
+    const hint = document.getElementById('totalPiecesHint');
+    if (state.useRedLines && state.useBlueLines && state.useGreenBoxes) {
+        hint.textContent = '（含绿框，实际会去重）';
+    } else if (state.useGreenBoxes) {
+        hint.textContent = '（绿框）';
+    } else if (gridOn) {
+        hint.textContent = '（网格）';
+    } else {
+        hint.textContent = '（未勾选）';
+    }
     document.getElementById('totalPieces').textContent = pieces;
 }
 

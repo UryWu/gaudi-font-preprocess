@@ -139,6 +139,12 @@ body {
     color: #888;
 }
 
+.stats-hint {
+    font-size: 11px;
+    color: #888;
+    font-weight: normal;
+}
+
 .rotate-controls {
     display: flex;
     flex-direction: column;

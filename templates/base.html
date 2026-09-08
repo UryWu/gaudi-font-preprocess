@@ -43,15 +43,27 @@
         // 读取置顶状态
         let pinned = localStorage.getItem('sideNavPinned') === '1';
 
+        // 隐藏延时（hover 离开后稍候，给鼠标移动到菜单的时间）
+        let hideTimer = null;
+        const cancelHide = () => {
+            if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+        };
+
         // 显示/隐藏：nav 展开时 handle 隐藏，nav 收起时 handle 显示
         const show = () => {
+            cancelHide();
             nav.classList.add('visible');
             if (handle) handle.classList.add('hidden');
         };
         const hide = () => {
             if (pinned) return;
+            cancelHide();
             nav.classList.remove('visible');
             if (handle) handle.classList.remove('hidden');
+        };
+        const scheduleHide = () => {
+            if (pinned) return;
+            hideTimer = setTimeout(hide, 250);
         };
 
         if (pinned) {
@@ -60,12 +72,15 @@
             if (handle) handle.classList.add('hidden');
         }
 
-        // 触发区：mouseenter 显示
+        // 触发：鼠标触及左侧边缘或悬停提示按钮即展开
         zone.addEventListener('mouseenter', show);
-        // 提示按钮点击也展开
-        if (handle) handle.addEventListener('click', show);
-        // 导航自身：mouseleave 时如果未置顶则收起
-        nav.addEventListener('mouseleave', hide);
+        if (handle) handle.addEventListener('mouseenter', show);
+        // 鼠标离开后若未进入菜单则收起
+        zone.addEventListener('mouseleave', scheduleHide);
+        if (handle) handle.addEventListener('mouseleave', scheduleHide);
+        // 进入菜单则取消收起
+        nav.addEventListener('mouseenter', cancelHide);
+        nav.addEventListener('mouseleave', scheduleHide);
 
         // 置顶按钮
         pinBtn.addEventListener('click', () => {

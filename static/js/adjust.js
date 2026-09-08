@@ -344,13 +344,13 @@ function createAdjustModal() {
     modal.className = 'adjust-modal';
     modal.innerHTML = `
         <div class="modal-content">
+            <button class="modal-close-x" onclick="closeAdjustModal()" title="关闭">×</button>
             <div class="preview-area">
                 <canvas id="adjustCanvas"></canvas>
             </div>
             <div class="modal-sidebar">
                 <div class="modal-header">
                     <h3>调整字符 - <span id="modalCharIndex">1</span></h3>
-                    <button class="modal-close-x" onclick="closeAdjustModal()" title="关闭">×</button>
                 </div>
                 <div class="adjust-controls">
                     <h4>切割范围</h4>

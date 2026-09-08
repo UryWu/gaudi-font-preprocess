@@ -837,6 +837,7 @@ body {
     max-height: 90vh;
     display: flex;
     flex-direction: row;
+    position: relative;  /* for absolute close button */
 }
 
 .modal-header {
@@ -849,17 +850,22 @@ body {
 }
 
 .modal-close-x {
+    position: absolute;
+    top: 8px;
+    right: 12px;
     background: none;
     border: none;
-    font-size: 28px;
+    font-size: 32px;
     line-height: 1;
     color: #999;
     cursor: pointer;
     padding: 0 8px;
-    margin-left: auto;
+    z-index: 10;
 }
 .modal-close-x:hover {
     color: #333;
+    background-color: #f5f5f5;
+    border-radius: 4px;
 }
 
 .modal-header h3 {

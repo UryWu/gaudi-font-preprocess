@@ -1,6 +1,7 @@
 ﻿# 高迪书法字库预处理工具 - 启动脚本
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$host.UI.RawUI.WindowTitle = '高迪书法字库预处理工具'
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectDir

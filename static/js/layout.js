@@ -2759,3 +2759,291 @@ function deleteSelectedItems() {
     updateUI();
     showToast('已删除选中项');
 }
+
+// ============== 快捷键设置 ==============
+
+// 默认快捷键（与现有实现行为一致）
+const DEFAULT_SHORTCUTS = {
+    pan: '',                          // 空白处左键拖动（无需修饰键）
+    panWithCtrl: 'Ctrl',              // Ctrl+左键拖动
+    addHLine: 'DoubleClick',          // 双击图片
+    addVLine: 'Shift+DoubleClick',    // Shift + 双击
+    dragLine: '',                     // 左键靠近线（无需修饰键）
+    deleteLine: 'Alt+Click',          // Alt+左键
+    dragBox: '',                      // 左键拖动绿框（无需修饰键）
+    editBox: 'DoubleClickBox',        // 双击绿框
+    deleteBox: 'Alt+ClickBox',        // Alt+左键绿框
+    mergeBoxes: 'Ctrl+Alt+Drag',      // Ctrl+Alt+左键拖动
+    selectBoxes: 'Alt+Drag',          // Alt+左键拖动
+    markBoxes: 'Shift+Drag',          // Shift+左键拖动
+};
+
+// 操作显示名 + 描述模板（用于渲染说明与设置表）
+const SHORTCUT_META = {
+    pan:           { label: '空白处左键拖动',          suffix: '（强制平移，忽略所有切割线和绿框）' },
+    panWithCtrl:   { label: 'Ctrl+左键拖动',            suffix: '（任意位置平移）' },
+    addHLine:      { label: '添加横向线',                suffix: '（双击图片）' },
+    addVLine:      { label: '添加纵向线',                suffix: '（Shift+双击）' },
+    dragLine:      { label: '移动切割线',                suffix: '（左键靠近线后拖动）' },
+    deleteLine:    { label: '删除切割线',                suffix: '（Alt+左键点击线）' },
+    dragBox:       { label: '移动绿框',                  suffix: '（左键拖动绿框；8 个调整手柄可缩放）' },
+    editBox:       { label: '编辑绿框',                  suffix: '（双击绿框打开编辑器）' },
+    deleteBox:     { label: '删除绿框',                  suffix: '（Alt+左键点击绿框）' },
+    mergeBoxes:    { label: '合并绿框',                  suffix: '（修饰键+左键拖动，松手即合并）' },
+    selectBoxes:   { label: '框选删除',                  suffix: '（修饰键+左键拖动框选蓝线/红线/绿框，Delete 删除）' },
+    markBoxes:     { label: '标记绿框',                  suffix: '（修饰键+左键拖动框选区域，自动添加绿框）' },
+};
+
+// 把键事件转为可读的字符串（用于存储 + 显示）
+function keyEventToShortcut(e) {
+    const parts = [];
+    if (e.ctrlKey)  parts.push('Ctrl');
+    if (e.altKey)   parts.push('Alt');
+    if (e.shiftKey) parts.push('Shift');
+    if (e.metaKey)  parts.push('Meta');
+
+    let key = e.key;
+    // 规范化：忽略纯修饰键；功能键保留
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return null;
+    if (key === ' ') key = 'Space';
+    if (key.length === 1) key = key.toUpperCase();
+    parts.push(key);
+    return parts.join('+');
+}
+
+// 把存储字符串转为人类可读文本
+function formatShortcutDisplay(value) {
+    if (!value) return '（无）';
+    // 把内部 token 转成更易读的形式
+    return value
+        .replace(/DoubleClickBox/g, '双击绿框')
+        .replace(/DoubleClick/g, '双击')
+        .replace(/ClickBox/g, '点击绿框')
+        .replace(/Click/g, '点击')
+        .replace(/Drag/g, '拖动');
+}
+
+const SHORTCUTS_STORAGE_KEY = 'gaudiShortcuts';
+
+// 从 localStorage 读取已保存的覆盖项
+function loadShortcutOverrides() {
+    try {
+        const s = localStorage.getItem(SHORTCUTS_STORAGE_KEY);
+        return s ? JSON.parse(s) : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+// 保存覆盖项
+function saveShortcutOverrides(overrides) {
+    localStorage.setItem(SHORTCUTS_STORAGE_KEY, JSON.stringify(overrides));
+}
+
+// 当前生效的快捷键（默认 + 用户覆盖）
+function getCurrentShortcuts() {
+    const overrides = loadShortcutOverrides();
+    return Object.assign({}, DEFAULT_SHORTCUTS, overrides);
+}
+
+// 初始化时挂载到 state，供事件处理函数读取（详见下方注释）
+state.currentShortcuts = getCurrentShortcuts();
+
+// ============== 渲染操作说明 ==============
+function renderInstructions() {
+    const container = document.querySelector('.instructions');
+    if (!container) return;
+    const s = state.currentShortcuts || getCurrentShortcuts();
+    const f = formatShortcutDisplay;
+    // 拼出每行操作说明
+    const lines = [];
+    lines.push('<p><strong>缩放图片：</strong>鼠标滚轮</p>');
+    // 强制平移：合并 pan + panWithCtrl
+    const panPan = f(s.pan);
+    const panCtrl = f(s.panWithCtrl);
+    lines.push(`<p><strong>强制平移模式：</strong>${panPan} / ${panCtrl}（任意位置）</p>`);
+    lines.push(`<p><strong>添加横向线：</strong>${f(s.addHLine)}图片</p>`);
+    lines.push(`<p><strong>添加纵向线：</strong>${f(s.addVLine)}图片</p>`);
+    lines.push(`<p><strong>移动切割线：</strong>${f(s.dragLine)}靠近线后拖动</p>`);
+    lines.push(`<p><strong>删除切割线：</strong>${f(s.deleteLine)}线</p>`);
+    lines.push('<p><span style="color: #e74c3c;">红色线</span> = 纵向切割</p>');
+    lines.push('<p><span style="color: #3498db;">蓝色线</span> = 横向切割</p>');
+    lines.push('<p><span style="color: #2ecc71;">绿色虚线</span> = 文本框</p>');
+    lines.push(`<p><strong>移动绿框：</strong>${f(s.dragBox)}绿框；绿框上显示 8 个调整手柄可缩放</p>`);
+    lines.push(`<p><strong>编辑绿框：</strong>${f(s.editBox)}绿框打开编辑器（修改 x/y/宽/高）</p>`);
+    lines.push(`<p><strong>删除绿框：</strong>${f(s.deleteBox)}绿框</p>`);
+    lines.push(`<p><strong>标记绿框：</strong>${f(s.markBoxes)}框选区域，自动添加一个绿框</p>`);
+    lines.push(`<p><strong>合并绿框：</strong>${f(s.mergeBoxes)}（无需点按钮，松手即合并）；也可点标题栏「合并绿色框」按钮后再拖动</p>`);
+    lines.push(`<p><strong>框选删除：</strong>${f(s.selectBoxes)}框选蓝线/红线/绿框（按 Delete 键删除选中的）</p>`);
+    lines.push('<p><strong>纠偏：</strong>上传时自动校正倾斜，检测到的角度会以 toast 提示（标题栏可关闭）</p>');
+    container.innerHTML = lines.join('');
+}
+
+// ============== 快捷键设置模态框 ==============
+
+// 模态内"待保存"的覆盖项（编辑过程中暂存）
+let pendingOverrides = {};
+
+function initShortcutModal() {
+    const modal = document.getElementById('shortcutModal');
+    const dialog = document.getElementById('shortcutDialog');
+    const header = document.getElementById('shortcutHeader');
+    if (!modal || !dialog || !header) return;
+
+    // 关闭 / 取消
+    modal.querySelectorAll('[data-close="shortcut-close"]').forEach(btn => {
+        btn.addEventListener('click', () => { modal.style.display = 'none'; });
+    });
+
+    // 拖动 + 8 向 resize
+    initModalDrag(dialog, header);
+    modal.querySelectorAll('.resize-handle').forEach(handle => {
+        initModalResize(dialog, handle, handle.classList[1]);
+    });
+
+    // 保存
+    document.getElementById('shortcutSaveBtn').addEventListener('click', applyShortcutSettings);
+    // 恢复默认
+    document.getElementById('shortcutResetBtn').addEventListener('click', resetShortcutSettings);
+
+    // 触发按钮
+    const trigger = document.getElementById('shortcutSettingsBtn');
+    if (trigger) trigger.addEventListener('click', openShortcutModal);
+}
+
+function openShortcutModal() {
+    const modal = document.getElementById('shortcutModal');
+    const dialog = document.getElementById('shortcutDialog');
+    if (!modal || !dialog) return;
+
+    // 把当前生效值拷到待保存
+    pendingOverrides = Object.assign({}, loadShortcutOverrides());
+
+    // 首次打开时初始化位置
+    if (!dialog.dataset.initialized) {
+        const w = 520, h = 580;
+        const headerH = document.querySelector('.header').getBoundingClientRect().height;
+        dialog.style.left = (window.innerWidth - w - 20) + 'px';
+        dialog.style.top = (headerH + 20) + 'px';
+        dialog.style.width = w + 'px';
+        dialog.style.height = h + 'px';
+        dialog.dataset.initialized = '1';
+    }
+
+    renderShortcutTable();
+    modal.style.display = 'block';
+}
+
+function renderShortcutTable() {
+    const tbody = document.getElementById('shortcutTable');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    Object.keys(DEFAULT_SHORTCUTS).forEach(key => {
+        const meta = SHORTCUT_META[key] || { label: key, suffix: '' };
+        const value = (key in pendingOverrides) ? pendingOverrides[key] : DEFAULT_SHORTCUTS[key];
+
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid #eee';
+        tr.innerHTML = `
+            <td style="padding: 6px 4px;">${meta.label}</td>
+            <td style="padding: 6px 4px;">
+                <span class="shortcut-value" data-key="${key}"
+                      style="display: inline-block; min-width: 120px; padding: 3px 8px;
+                             border: 1px solid #ccc; border-radius: 3px; background: #fafafa;
+                             font-family: monospace; font-size: 12px;">
+                    ${escapeHtml(formatShortcutDisplay(value))}
+                </span>
+                <button class="btn btn-secondary shortcut-record-btn"
+                        data-key="${key}"
+                        style="padding: 2px 8px; font-size: 12px; margin-left: 6px;">录制</button>
+                <button class="btn btn-secondary shortcut-clear-btn"
+                        data-key="${key}"
+                        style="padding: 2px 8px; font-size: 12px; margin-left: 4px;">清除</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    // 绑定录制 / 清除按钮
+    tbody.querySelectorAll('.shortcut-record-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const key = e.currentTarget.dataset.key;
+            startRecording(key, e.currentTarget);
+        });
+    });
+    tbody.querySelectorAll('.shortcut-clear-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const key = e.currentTarget.dataset.key;
+            pendingOverrides[key] = '';
+            updateShortcutRowDisplay(key);
+        });
+    });
+}
+
+function updateShortcutRowDisplay(key) {
+    const valueEl = document.querySelector(`.shortcut-value[data-key="${key}"]`);
+    if (!valueEl) return;
+    const value = (key in pendingOverrides) ? pendingOverrides[key] : DEFAULT_SHORTCUTS[key];
+    valueEl.textContent = formatShortcutDisplay(value);
+}
+
+// 进入"录制"状态：捕获下一次键盘事件
+function startRecording(key, btn) {
+    const valueEl = document.querySelector(`.shortcut-value[data-key="${key}"]`);
+    if (!valueEl) return;
+
+    const origText = valueEl.textContent;
+    valueEl.textContent = '… 请按键 …';
+    valueEl.style.background = '#fffbe6';
+    valueEl.style.borderColor = '#f39c12';
+    btn.disabled = true;
+    btn.textContent = '录制中…';
+
+    const handler = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const shortcut = keyEventToShortcut(e);
+        document.removeEventListener('keydown', handler, true);
+        btn.disabled = false;
+        btn.textContent = '录制';
+        valueEl.style.background = '#fafafa';
+        valueEl.style.borderColor = '#ccc';
+        if (shortcut) {
+            pendingOverrides[key] = shortcut;
+        } else {
+            // 纯修饰键：恢复原值
+            valueEl.textContent = origText;
+            return;
+        }
+        updateShortcutRowDisplay(key);
+    };
+    // capture: true 以优先于页面其它键盘处理
+    document.addEventListener('keydown', handler, true);
+}
+
+// 保存：写入 localStorage + 刷新 state + 重渲染说明
+function applyShortcutSettings() {
+    saveShortcutOverrides(pendingOverrides);
+    state.currentShortcuts = getCurrentShortcuts();
+    renderInstructions();
+    document.getElementById('shortcutModal').style.display = 'none';
+    showToast('快捷键设置已保存');
+}
+
+// 恢复默认：清空覆盖项并刷新表格（需点保存后生效）
+function resetShortcutSettings() {
+    pendingOverrides = {};
+    renderShortcutTable();
+    showToast('已恢复默认值，请点保存');
+}
+
+// 转义 HTML（防止 label/suffix 中含 < > 而破坏表格）
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+// 初始化时挂载快捷键模态 + 渲染说明
+initShortcutModal();
+renderInstructions();

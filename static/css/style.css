@@ -445,7 +445,8 @@ body {
 }
 
 .char-card.empty {
-    opacity: 0.3;
+    background-color: #fff5f5;
+    border: 1px dashed #e8a5a5;
 }
 
 .char-number {
@@ -492,6 +493,12 @@ body {
 .char-status.ok {
     background-color: #27ae60;
     color: white;
+}
+
+.char-status.empty-slice {
+    background-color: #e74c3c;
+    color: white;
+    font-weight: 600;
 }
 
 /* 调整弹窗 */

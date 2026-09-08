@@ -143,6 +143,11 @@ function createCharCard(char, displayIndex) {
         status.className = 'char-status adjusted';
         status.textContent = '已调整';
         card.appendChild(status);
+    } else if (char.is_empty) {
+        const status = document.createElement('div');
+        status.className = 'char-status empty-slice';
+        status.textContent = '空白';
+        card.appendChild(status);
     }
 
     card.appendChild(number);
@@ -200,10 +205,17 @@ function updateAdjustButton() {
 
 // 更新UI
 function updateUI() {
-    const validChars = state.characters.filter(c => !c.is_empty);
+    const total = state.characters.length;
+    const emptyCount = state.characters.filter(c => c.is_empty).length;
+    const validCount = total - emptyCount;
     const needsAdjust = state.characters.filter(c => c.needs_adjust);
 
-    elements.totalCount.textContent = validChars.length;
+    // 总数 + 空白数（如 "859（空白 201）"）
+    if (emptyCount > 0) {
+        elements.totalCount.textContent = `${validCount}（空白 ${emptyCount}）`;
+    } else {
+        elements.totalCount.textContent = `${validCount}`;
+    }
 
     if (needsAdjust.length > 0) {
         elements.adjustCount.textContent = needsAdjust.length;

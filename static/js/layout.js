@@ -90,6 +90,11 @@ function setupEventListeners() {
             updateUI();
         });
     }
+
+    // 绿色框设置按钮 + 模态框
+    const greenBoxSettingsBtn = document.getElementById('greenBoxSettingsBtn');
+    if (greenBoxSettingsBtn) greenBoxSettingsBtn.addEventListener('click', openGreenBoxModal);
+    initGreenBoxModal();
 }
 
 function resizeCanvas() {
@@ -1008,4 +1013,177 @@ function setRotateButtonsDisabled(disabled) {
     rotateLeftBtn.disabled = disabled;
     rotateRightBtn.disabled = disabled;
     rotateResetBtn.disabled = disabled || state.cumulativeRotation === 0;
+}
+
+// ============== 绿色框过滤设置 ==============
+
+// 保存原始（未过滤）的 boxes，用于重置
+let originalBoxes = [];
+
+function initGreenBoxModal() {
+    const modal = document.getElementById('greenBoxModal');
+    if (!modal) return;
+
+    // 关闭按钮（点 × 或取消 或点遮罩）
+    modal.querySelectorAll('[data-close="modal-close"]').forEach(btn => {
+        btn.addEventListener('click', () => { modal.style.display = 'none'; });
+    });
+    modal.addEventListener('click', e => {
+        if (e.target === modal) modal.style.display = 'none';
+    });
+
+    // 模式切换
+    modal.querySelectorAll('input[name="filterMode"]').forEach(radio => {
+        radio.addEventListener('change', updateFilterMode);
+    });
+
+    // 滑块与输入框联动（每个滑块 id 对应同名 input）
+    const pairs = [
+        ['minAreaSlider', 'minAreaInput'],
+        ['maxAreaSlider', 'maxAreaInput'],
+        ['minWSlider', 'minWInput'],
+        ['maxWSlider', 'maxWInput'],
+        ['minHSlider', 'minHInput'],
+        ['maxHSlider', 'maxHInput'],
+    ];
+    pairs.forEach(([sliderId, inputIdId]) => {
+        const slider = document.getElementById(sliderId);
+        const input = document.getElementById(inputIdId);
+        if (!slider || !input) return;
+        const sync = (source) => {
+            return () => {
+                const val = Math.max(0, parseInt(source.value, 10) || 0);
+                if (source === slider) {
+                    input.value = val;
+                } else {
+                    slider.value = val;
+                }
+                updateFilterStats();
+            };
+        };
+        slider.addEventListener('input', sync(slider));
+        input.addEventListener('input', sync(input));
+    });
+
+    // 重置 / 应用 按钮
+    document.getElementById('filterResetBtn').addEventListener('click', resetGreenBoxFilter);
+    document.getElementById('filterApplyBtn').addEventListener('click', applyGreenBoxFilter);
+}
+
+function openGreenBoxModal() {
+    const modal = document.getElementById('greenBoxModal');
+    if (!modal) return;
+
+    // 保存当前 boxes 作为"原始"，重置时回到这个状态
+    originalBoxes = state.boxes.slice();
+
+    // 自适应滑块范围
+    autoAdjustRanges();
+
+    // 同步统计
+    updateFilterStats();
+    modal.style.display = 'flex';
+}
+
+function updateFilterMode() {
+    const mode = document.querySelector('input[name="filterMode"]:checked').value;
+    document.getElementById('filterModeArea').style.display = mode === 'area' ? 'block' : 'none';
+    document.getElementById('filterModeDims').style.display = mode === 'dims' ? 'block' : 'none';
+    updateFilterStats();
+}
+
+// 自动调整滑块范围（基于当前 boxes 的实际值）
+function autoAdjustRanges() {
+    const boxes = state.boxes || [];
+    if (boxes.length === 0) return;
+
+    let maxArea = 0, maxW = 0, maxH = 0;
+    for (const b of boxes) {
+        const area = b.width * b.height;
+        if (area > maxArea) maxArea = area;
+        if (b.width > maxW) maxW = b.width;
+        if (b.height > maxH) maxH = b.height;
+    }
+    // 上限取大一点，留余量
+    const areaMax = Math.max(maxArea * 1.2, 100);
+    const wMax = Math.max(maxW * 1.2, 50);
+    const hMax = Math.max(maxH * 1.2, 50);
+
+    // 面积模式：min=0, max=areaMax
+    setRangeBounds('minAreaSlider', 'minAreaInput', 0, areaMax);
+    setRangeBounds('maxAreaSlider', 'maxAreaInput', 0, areaMax);
+    document.getElementById('minAreaSlider').value = 0;
+    document.getElementById('minAreaInput').value = 0;
+    document.getElementById('maxAreaSlider').value = areaMax;
+    document.getElementById('maxAreaInput').value = areaMax;
+
+    // 长宽模式
+    setRangeBounds('minWSlider', 'minWInput', 0, wMax);
+    setRangeBounds('maxWSlider', 'maxWInput', 0, wMax);
+    document.getElementById('minWSlider').value = 0;
+    document.getElementById('minWInput').value = 0;
+    document.getElementById('maxWSlider').value = wMax;
+    document.getElementById('maxWInput').value = wMax;
+
+    setRangeBounds('minHSlider', 'minHInput', 0, hMax);
+    setRangeBounds('maxHSlider', 'maxHInput', 0, hMax);
+    document.getElementById('minHSlider').value = 0;
+    document.getElementById('minHInput').value = 0;
+    document.getElementById('maxHSlider').value = hMax;
+    document.getElementById('maxHInput').value = hMax;
+}
+
+function setRangeBounds(sliderId, inputId, min, max) {
+    const s = document.getElementById(sliderId);
+    const i = document.getElementById(inputId);
+    if (s) { s.min = min; s.max = max; }
+    if (i) { i.min = min; }
+}
+
+// 当前过滤逻辑：基于模式 + 输入值过滤 originalBoxes
+function getCurrentFilterPredicate() {
+    const mode = document.querySelector('input[name="filterMode"]:checked').value;
+    if (mode === 'area') {
+        const minA = parseInt(document.getElementById('minAreaInput').value, 10) || 0;
+        const maxA = parseInt(document.getElementById('maxAreaInput').value, 10) || Infinity;
+        return b => {
+            const a = b.width * b.height;
+            return a >= minA && a <= maxA;
+        };
+    } else {
+        const minW = parseInt(document.getElementById('minWInput').value, 10) || 0;
+        const maxW = parseInt(document.getElementById('maxWInput').value, 10) || Infinity;
+        const minH = parseInt(document.getElementById('minHInput').value, 10) || 0;
+        const maxH = parseInt(document.getElementById('maxHInput').value, 10) || Infinity;
+        return b => b.width >= minW && b.width <= maxW && b.height >= minH && b.height <= maxH;
+    }
+}
+
+function updateFilterStats() {
+    if (originalBoxes.length === 0) return;
+    const pred = getCurrentFilterPredicate();
+    const kept = originalBoxes.filter(pred).length;
+    document.getElementById('filterTotalCount').textContent = originalBoxes.length;
+    document.getElementById('filterKeptCount').textContent = kept;
+    document.getElementById('filterRemovedCount').textContent = originalBoxes.length - kept;
+}
+
+function applyGreenBoxFilter() {
+    const pred = getCurrentFilterPredicate();
+    const filtered = originalBoxes.filter(pred);
+    state.boxes = filtered;
+    // 重置标志：检测结果已变（cut_lines 还是旧的），点击切割来源时可能不一致
+    drawCanvas();
+    updateUI();
+    document.getElementById('greenBoxModal').style.display = 'none';
+    showToast(`已过滤：保留 ${filtered.length} / ${originalBoxes.length} 个绿框`);
+}
+
+function resetGreenBoxFilter() {
+    state.boxes = originalBoxes.slice();
+    autoAdjustRanges();
+    updateFilterStats();
+    drawCanvas();
+    updateUI();
+    showToast('已重置为过滤前');
 }

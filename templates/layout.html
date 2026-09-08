@@ -64,6 +64,7 @@
                 <span style="color: #2ecc71;">绿色框</span>
                 <span class="checkbox-desc">（文本框）</span>
             </label>
+            <button id="greenBoxSettingsBtn" class="btn-outline-info btn-block" title="按大小过滤绿色框">绿色框设置</button>
         </div>
 
         <div class="panel-section">
@@ -104,9 +105,95 @@
 
         </div>
 </div>
+
+<!-- 绿色框设置模态框 -->
+<div class="modal-mask" id="greenBoxModal" style="display: none;">
+    <div class="modal-dialog" style="width: 560px; height: 650px;">
+        <div class="modal-header">
+            <h3>绿色框设置</h3>
+            <button class="modal-close" data-close="modal-close" title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-row">
+                <label>过滤模式：</label>
+                <label class="radio-label">
+                    <input type="radio" name="filterMode" value="area" checked>
+                    <span>面积范围</span>
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="filterMode" value="dims">
+                    <span>长 × 宽 范围</span>
+                </label>
+            </div>
+
+            <!-- 模式 1：面积范围 -->
+            <div class="filter-panel" id="filterModeArea">
+                <h4>面积范围</h4>
+                <div class="range-row">
+                    <div class="range-cell">
+                        <label>最小</label>
+                        <div class="slider-row">
+                                <input type="range" id="minAreaSlider" min="0" max="5000" value="0">
+                                <input type="number" id="minAreaInput" min="0" value="0">
+                            </div>
+                    </div>
+                    <div class="range-cell">
+                        <label>最大</label>
+                        <div class="slider-row">
+                                <input type="range" id="maxAreaSlider" min="0" max="50000" value="50000">
+                                <input type="number" id="maxAreaInput" min="0" value="50000">
+                            </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模式 2：长 × 宽 范围 -->
+            <div class="filter-panel" id="filterModeDims" style="display: none;">
+                <h4>长 × 宽 范围</h4>
+                <div class="range-row">
+                    <div class="range-cell">
+                        <label>宽（最小-最大）</label>
+                        <div class="slider-row">
+                                <input type="range" id="minWSlider" min="0" max="500" value="0">
+                                <input type="number" id="minWInput" min="0" value="0">
+                                —
+                                <input type="range" id="maxWSlider" min="0" max="500" value="500">
+                                <input type="number" id="maxWInput" min="0" value="500">
+                            </div>
+                    </div>
+                </div>
+                <div class="range-row">
+                    <div class="range-cell">
+                        <label>高（最小-最大）</label>
+                        <div class="slider-row">
+                                <input type="range" id="minHSlider" min="0" max="500" value="0">
+                                <input type="number" id="minHInput" min="0" value="0">
+                                —
+                                <input type="range" id="maxHSlider" min="0" max="500" value="500">
+                                <input type="number" id="maxHInput" min="0" value="500">
+                            </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 预览统计 -->
+            <div class="filter-stats">
+                <span>总数 <strong id="filterTotalCount">0</strong></span>
+                <span>保留 <strong id="filterKeptCount">0</strong></span>
+                <span>过滤掉 <strong id="filterRemovedCount">0</strong></span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" data-close="modal-close">取消</button>
+            <button class="btn btn-secondary" id="filterResetBtn">重置</button>
+            <button class="btn btn-primary" id="filterApplyBtn">应用</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=15"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=16"></script>
 {% endblock %}

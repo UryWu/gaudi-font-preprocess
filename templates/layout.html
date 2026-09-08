@@ -137,6 +137,7 @@
             <!-- 模式 1：面积范围 -->
             <div class="filter-panel" id="filterModeArea">
                 <h4>面积范围</h4>
+                <canvas id="areaHistogram" class="histogram-canvas" width="500" height="80"></canvas>
                 <div class="range-row">
                     <div class="range-cell">
                         <label>最小</label>
@@ -203,5 +204,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=16"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=17"></script>
 {% endblock %}

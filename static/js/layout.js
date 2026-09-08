@@ -154,6 +154,9 @@ async function handleImageUpload(e) {
         state.horizontalLines = data.horizontal_lines || [];
         state.stripHorizontalLines = data.strip_horizontal_lines || [];  // 按列分组的横向切割线
         state.boxes = data.boxes || [];
+        // 初始化主集（识别完成后的原始 boxes）
+        masterBoxes = state.boxes.slice();
+        persistMasterBoxes();
         state.zoomLevel = 1;
         state.panOffset = { x: 0, y: 0 };
 
@@ -977,6 +980,9 @@ async function handleDetect() {
         state.horizontalLines = data.horizontal_lines || [];
         state.stripHorizontalLines = data.strip_horizontal_lines || [];
         state.boxes = data.boxes || [];
+        // 同步主集（识别后=未过滤的原始集）
+        masterBoxes = state.boxes.slice();
+        persistMasterBoxes();
         state.detectionStale = false;
         detectBtn.classList.remove('btn-detect-stale');
 
@@ -1018,7 +1024,7 @@ function setRotateButtonsDisabled(disabled) {
 // ============== 绿色框过滤设置 ==============
 
 // 保存原始（未过滤）的 boxes，用于重置
-let originalBoxes = [];
+let masterBoxes = [];
 
 function initGreenBoxModal() {
     const modal = document.getElementById('greenBoxModal');
@@ -1069,6 +1075,11 @@ function initGreenBoxModal() {
                     slider.value = val;
                 }
                 updateFilterStats();
+                // 面积滑块变化时重绘直方图（min/max 边界线）
+                if (sliderId.startsWith('minArea') || sliderId.startsWith('maxArea') ||
+                    sliderId.startsWith('minW') || sliderId.startsWith('maxW')) {
+                    renderAreaHistogram();
+                }
             };
         };
         slider.addEventListener('input', sync(slider));
@@ -1159,8 +1170,12 @@ function openGreenBoxModal() {
     const dialog = document.getElementById('greenBoxDialog');
     if (!modal || !dialog) return;
 
-    // 保存当前 boxes 作为"原始"，重置时回到这个状态
-    originalBoxes = state.boxes.slice();
+    // 只在首次打开时初始化主集（避免被过滤后的 state.boxes 覆盖）
+    // 这样放宽过滤条件时，仍能从完整主集中筛选
+    if (masterBoxes.length === 0) {
+        masterBoxes = state.boxes.slice();
+        persistMasterBoxes();
+    }
 
     // 自适应滑块范围
     autoAdjustRanges();
@@ -1194,25 +1209,33 @@ function autoAdjustRanges() {
     const boxes = state.boxes || [];
     if (boxes.length === 0) return;
 
-    let maxArea = 0, maxW = 0, maxH = 0;
+    let minArea = Infinity, maxArea = 0;
+    let minW = Infinity, maxW = 0;
+    let minH = Infinity, maxH = 0;
     for (const b of boxes) {
         const area = b.width * b.height;
+        if (area < minArea) minArea = area;
         if (area > maxArea) maxArea = area;
+        if (b.width < minW) minW = b.width;
         if (b.width > maxW) maxW = b.width;
+        if (b.height < minH) minH = b.height;
         if (b.height > maxH) maxH = b.height;
     }
-    // 上限取大一点，留余量
-    const areaMax = Math.max(maxArea * 1.2, 100);
-    const wMax = Math.max(maxW * 1.2, 50);
-    const hMax = Math.max(maxH * 1.2, 50);
+    // 滑块上下限 = 数据实际范围（用户要求"在当前分布里面"）
+    const areaLo = Math.max(1, minArea);
+    const areaHi = maxArea;
+    const wLo = Math.max(1, minW);
+    const wHi = maxW;
+    const hLo = Math.max(1, minH);
+    const hHi = maxH;
 
     // 设置上下限
-    setRangeBounds('minAreaSlider', 'minAreaInput', 0, areaMax);
-    setRangeBounds('maxAreaSlider', 'maxAreaInput', 0, areaMax);
-    setRangeBounds('minWSlider', 'minWInput', 0, wMax);
-    setRangeBounds('maxWSlider', 'maxWInput', 0, wMax);
-    setRangeBounds('minHSlider', 'minHInput', 0, hMax);
-    setRangeBounds('maxHSlider', 'maxHInput', 0, hMax);
+    setRangeBounds('minAreaSlider', 'minAreaInput', areaLo, areaHi);
+    setRangeBounds('maxAreaSlider', 'maxAreaInput', areaLo, areaHi);
+    setRangeBounds('minWSlider', 'minWInput', wLo, wHi);
+    setRangeBounds('maxWSlider', 'maxWInput', wLo, wHi);
+    setRangeBounds('minHSlider', 'minHInput', hLo, hHi);
+    setRangeBounds('maxHSlider', 'maxHInput', hLo, hHi);
 
     // 优先加载上次保存的设置
     const saved = loadGreenBoxSettings();
@@ -1227,8 +1250,9 @@ function autoAdjustRanges() {
         const setVal = (id, v) => {
             const el = document.getElementById(id);
             if (!el) return;
-            el.value = Math.max(parseInt(el.min, 10) || 0,
-                                Math.min(parseInt(el.max, 10) || v, v));
+            const lo = parseInt(el.min, 10) || 0;
+            const hi = parseInt(el.max, 10) || v;
+            el.value = Math.max(lo, Math.min(hi, v));
         };
         setVal('minAreaInput', saved.minArea);
         setVal('maxAreaInput', saved.maxArea);
@@ -1237,19 +1261,14 @@ function autoAdjustRanges() {
         setVal('minHInput',   saved.minH);
         setVal('maxHInput',   saved.maxH);
     } else {
-        // 默认全选（不过滤）
-        document.getElementById('minAreaSlider').value = 0;
-        document.getElementById('minAreaInput').value = 0;
-        document.getElementById('maxAreaSlider').value = areaMax;
-        document.getElementById('maxAreaInput').value = areaMax;
-        document.getElementById('minWSlider').value = 0;
-        document.getElementById('minWInput').value = 0;
-        document.getElementById('maxWSlider').value = wMax;
-        document.getElementById('maxWInput').value = wMax;
-        document.getElementById('minHSlider').value = 0;
-        document.getElementById('minHInput').value = 0;
-        document.getElementById('maxHSlider').value = hMax;
-        document.getElementById('maxHInput').value = hMax;
+        // 默认全选（范围 = 数据范围，不过滤）
+        const setVal = (id, v) => { document.getElementById(id).value = v; };
+        setVal('minAreaInput', areaLo);
+        setVal('maxAreaInput', areaHi);
+        setVal('minWInput', wLo);
+        setVal('maxWInput', wHi);
+        setVal('minHInput', hLo);
+        setVal('maxHInput', hHi);
     }
 
     // 同步滑块显示（input → slider）
@@ -1258,9 +1277,79 @@ function autoAdjustRanges() {
         const slider = document.getElementById(`${k}Slider`);
         if (input && slider) slider.value = input.value;
     });
+
+    // 渲染面积直方图（辅助选择阈值）
+    renderAreaHistogram();
 }
 
 // localStorage 读写
+// 渲染面积分布直方图（辅助用户选择阈值）
+// X 轴 = 数据实际范围，对数分箱避免被超大值主导
+function renderAreaHistogram() {
+    const canvas = document.getElementById('areaHistogram');
+    if (!canvas || masterBoxes.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // 数据范围（与 autoAdjustRanges 一致）
+    const areas = masterBoxes.map(b => b.width * b.height).filter(a => a > 0);
+    if (areas.length === 0) return;
+    const minA = Math.max(1, Math.min(...areas));
+    const maxA = Math.max(...areas);
+    if (maxA <= minA) return;
+
+    const BINS = 30;
+    // 对数分箱：[minA, maxA] 等比分在 log 空间
+    const logMin = Math.log(minA);
+    const logMax = Math.log(maxA);
+    const logStep = (logMax - logMin) / BINS;
+    const bins = new Array(BINS).fill(0);
+    const binEdges = new Array(BINS + 1);
+    for (let i = 0; i <= BINS; i++) {
+        binEdges[i] = Math.exp(logMin + i * logStep);
+    }
+    for (const a of areas) {
+        let idx = Math.floor((Math.log(a) - logMin) / logStep);
+        if (idx >= BINS) idx = BINS - 1;
+        if (idx < 0) idx = 0;
+        bins[idx]++;
+    }
+    const maxCount = Math.max(...bins, 1);
+
+    // 当前过滤区间
+    const minV = parseInt(document.getElementById('minAreaInput').value, 10) || minA;
+    const maxV = parseInt(document.getElementById('maxAreaInput').value, 10) || maxA;
+
+    // 画柱子
+    const padding = 4;
+    const chartW = W - padding * 2;
+    const chartH = H - padding * 2;
+    const barW = chartW / BINS;
+    for (let i = 0; i < BINS; i++) {
+        const x = padding + i * barW;
+        const h = bins[i] / maxCount * chartH;
+        const y = H - padding - h;
+        const binStart = binEdges[i];
+        const binEnd = binEdges[i + 1];
+        const inRange = binEnd >= minV && binStart <= maxV;
+        ctx.fillStyle = inRange ? '#4a90a4' : '#c8d0d8';
+        ctx.fillRect(x + 1, y, Math.max(1, barW - 2), h);
+    }
+
+    // 标注：min/max 边界线（橙色）
+    ctx.strokeStyle = '#e67e22';
+    ctx.lineWidth = 2;
+    if (minV > minA && minV < maxA) {
+        const xMin = padding + ((Math.log(minV) - logMin) / logStep) * barW;
+        ctx.beginPath(); ctx.moveTo(xMin, 0); ctx.lineTo(xMin, H); ctx.stroke();
+    }
+    if (maxV > minA && maxV < maxA) {
+        const xMax = padding + ((Math.log(maxV) - logMin) / logStep) * barW;
+        ctx.beginPath(); ctx.moveTo(xMax, 0); ctx.lineTo(xMax, H); ctx.stroke();
+    }
+}
+
 function saveGreenBoxSettings() {
     const get = id => parseInt(document.getElementById(id).value, 10) || 0;
     const mode = document.querySelector('input[name="filterMode"]:checked').value;
@@ -1285,6 +1374,26 @@ function loadGreenBoxSettings() {
     }
 }
 
+// 主集（未过滤）按 imageHash 持久化
+function masterKey() {
+    return 'greenBoxMaster_' + (state.imageHash || 'default');
+}
+function persistMasterBoxes() {
+    try {
+        localStorage.setItem(masterKey(), JSON.stringify(masterBoxes));
+    } catch (e) {
+        console.warn('masterBoxes 持久化失败：', e);
+    }
+}
+function loadMasterBoxes() {
+    try {
+        const s = localStorage.getItem(masterKey());
+        return s ? JSON.parse(s) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function setRangeBounds(sliderId, inputId, min, max) {
     const s = document.getElementById(sliderId);
     const i = document.getElementById(inputId);
@@ -1292,7 +1401,7 @@ function setRangeBounds(sliderId, inputId, min, max) {
     if (i) { i.min = min; }
 }
 
-// 当前过滤逻辑：基于模式 + 输入值过滤 originalBoxes
+// 当前过滤逻辑：基于模式 + 输入值过滤 masterBoxes
 function getCurrentFilterPredicate() {
     const mode = document.querySelector('input[name="filterMode"]:checked').value;
     if (mode === 'area') {
@@ -1312,24 +1421,24 @@ function getCurrentFilterPredicate() {
 }
 
 function updateFilterStats() {
-    if (originalBoxes.length === 0) return;
+    if (masterBoxes.length === 0) return;
     const pred = getCurrentFilterPredicate();
-    const kept = originalBoxes.filter(pred).length;
-    document.getElementById('filterTotalCount').textContent = originalBoxes.length;
+    const kept = masterBoxes.filter(pred).length;
+    document.getElementById('filterTotalCount').textContent = masterBoxes.length;
     document.getElementById('filterKeptCount').textContent = kept;
-    document.getElementById('filterRemovedCount').textContent = originalBoxes.length - kept;
+    document.getElementById('filterRemovedCount').textContent = masterBoxes.length - kept;
 }
 
 function applyGreenBoxFilter() {
     const pred = getCurrentFilterPredicate();
-    const filtered = originalBoxes.filter(pred);
+    const filtered = masterBoxes.filter(pred);
     state.boxes = filtered;
     // 持久化当前过滤设置（下次打开模态自动加载）
     saveGreenBoxSettings();
     drawCanvas();
     updateUI();
     document.getElementById('greenBoxModal').style.display = 'none';
-    showToast(`已过滤：保留 ${filtered.length} / ${originalBoxes.length} 个绿框`);
+    showToast(`已过滤：保留 ${filtered.length} / ${masterBoxes.length} 个绿框`);
 }
 
 function resetGreenBoxFilter() {

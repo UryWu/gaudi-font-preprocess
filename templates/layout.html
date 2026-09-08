@@ -4,10 +4,7 @@
 
 {% block header_actions %}
 <div class="header-actions">
-    <label class="checkbox-label" title="勾上后左键拖动=平移图片（不触发切割线拖动/绿框点击）" style="margin-right: 4px;">
-        <input type="checkbox" id="panForceToggle" style="accent-color: #f39c12;">
-        <span>强制平移模式（忽略切割线/绿框）</span>
-    </label>
+    <button id="panForceToggle" class="btn btn-primary" title="强制平移模式（忽略切割线/绿框）">强制平移模式</button>
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <button id="uploadBtn" class="btn btn-primary">上传图片</button>
     <button id="detectBtn" class="btn-detect" disabled title="对当前旋转重新检测文本框和切割线">开始识别</button>
@@ -46,6 +43,9 @@
                 <p><span style="color: #e74c3c;">红色线</span> = 纵向切割</p>
                 <p><span style="color: #3498db;">蓝色线</span> = 横向切割</p>
                 <p><span style="color: #2ecc71;">绿色虚线</span> = 文本框</p>
+                <p><strong>移动绿框：</strong>左键拖动绿框；绿框上显示 8 个调整手柄可缩放</p>
+                <p><strong>编辑绿框：</strong>双击绿框打开编辑器（修改 x/y/宽/高）</p>
+                <p><strong>删除绿框：</strong>Alt + 左键点击绿框</p>
                 <p><strong>纠偏：</strong>上传时自动校正倾斜，检测到的角度会以 toast 提示（标题栏可关闭）</p>
             </div>
         </div>
@@ -204,9 +204,41 @@
     </div>
 </div>
 
+<!-- 单个绿框编辑模态 -->
+<div class="modal-mask" id="editBoxModal" style="display: none;">
+    <div class="modal-dialog edit-box-dialog" id="editBoxDialog">
+        <div class="modal-header" id="editBoxHeader">
+            <h3>编辑绿框 <span id="editBoxInfo" class="edit-box-info"></span></h3>
+            <button class="modal-close" data-close="edit-modal-close" title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-row">
+                <label class="form-label">x_min：</label>
+                <input type="number" id="editBoxXInput" min="0" step="1" class="form-input">
+            </div>
+            <div class="form-row">
+                <label class="form-label">y_min：</label>
+                <input type="number" id="editBoxYInput" min="0" step="1" class="form-input">
+            </div>
+            <div class="form-row">
+                <label class="form-label">宽：</label>
+                <input type="number" id="editBoxWInput" min="1" step="1" class="form-input">
+            </div>
+            <div class="form-row">
+                <label class="form-label">高：</label>
+                <input type="number" id="editBoxHInput" min="1" step="1" class="form-input">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" data-close="edit-modal-close">取消</button>
+            <button class="btn btn-primary" id="editBoxOkBtn">确定</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=17"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=18"></script>
 {% endblock %}

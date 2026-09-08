@@ -25,7 +25,10 @@ const state = {
     detectionStale: false,  // 当前检测结果是否已过期（旋转后未重新识别）
     useRedLines: true,   // 切割：参与红/蓝网格
     useBlueLines: true,
-    useGreenBoxes: false  // 切割：参与绿框直接切割
+    useGreenBoxes: false,  // 切割：参与绿框直接切割
+    hoveredBox: null,      // 当前悬停的绿框 {index, box} 或 null
+    draggingBox: null,     // 正在拖动的绿框 {index, offsetX, offsetY}
+    resizingBox: null,     // 正在调整大小的绿框 {index, dir, startBox, startMouseImg}
 };
 
 // DOM 元素
@@ -95,6 +98,15 @@ function setupEventListeners() {
     const greenBoxSettingsBtn = document.getElementById('greenBoxSettingsBtn');
     if (greenBoxSettingsBtn) greenBoxSettingsBtn.addEventListener('click', openGreenBoxModal);
     initGreenBoxModal();
+    initEditBoxModal();
+
+    // 强制平移模式：button 切 active 类（用 class 而非 checked）
+    const panForceBtn = document.getElementById('panForceToggle');
+    if (panForceBtn && panForceBtn.tagName === 'BUTTON') {
+        panForceBtn.addEventListener('click', () => {
+            panForceBtn.classList.toggle('active');
+        });
+    }
 }
 
 function resizeCanvas() {
@@ -273,6 +285,49 @@ function drawTextBoxes() {
     });
 
     ctx.setLineDash([]);
+
+    // 悬停/拖动/调整大小时，在该框上叠加 8 个调整手柄
+    const activeIdx = state.hoveredBox ? state.hoveredBox.index
+        : state.draggingBox ? state.draggingBox.index
+        : state.resizingBox ? state.resizingBox.index
+        : -1;
+    if (activeIdx >= 0 && activeIdx < state.boxes.length) {
+        drawBoxHandles(state.boxes[activeIdx], offsetX, offsetY, scale);
+    }
+}
+
+// 在指定 box 周围画 8 个调整手柄（4 角 + 4 边中点）
+function drawBoxHandles(box, offsetX, offsetY, scale) {
+    const x = offsetX + box.x_min * scale;
+    const y = offsetY + box.y_min * scale;
+    const w = box.width * scale;
+    const h = box.height * scale;
+
+    const handleSize = 8 / state.zoomLevel;  // 保持视觉大小一致
+    const half = handleSize / 2;
+    const positions = [
+        { dir: 'nw', cx: x,         cy: y         },
+        { dir: 'n',  cx: x + w / 2, cy: y         },
+        { dir: 'ne', cx: x + w,     cy: y         },
+        { dir: 'e',  cx: x + w,     cy: y + h / 2 },
+        { dir: 'se', cx: x + w,     cy: y + h     },
+        { dir: 's',  cx: x + w / 2, cy: y + h     },
+        { dir: 'sw', cx: x,         cy: y + h     },
+        { dir: 'w',  cx: x,         cy: y + h / 2 },
+    ];
+
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = 1.5 / state.zoomLevel;
+    positions.forEach(p => {
+        ctx.beginPath();
+        ctx.rect(p.cx - half, p.cy - half, handleSize, handleSize);
+        ctx.fill();
+        ctx.stroke();
+    });
+    ctx.restore();
 }
 
 function drawCutLines() {
@@ -370,30 +425,87 @@ function handleMouseDown(e) {
     // 左键处理
     if (e.button !== 0) return;
 
-    // 「总是平移」勾选框效果 = 一直按住 Ctrl
-    const panForce = document.getElementById('panForceToggle');
-    const isPanForce = panForce && panForce.checked;
+    // 「强制平移」按钮：激活时所有左键都视为平移
+    const panForceEl = document.getElementById('panForceToggle');
+    const isPanForce = panForceEl && (
+        (panForceEl.tagName === 'BUTTON' && panForceEl.classList.contains('active')) ||
+        (panForceEl.tagName === 'INPUT' && panForceEl.checked)
+    );
     const ctrl = e.ctrlKey || isPanForce;
 
-    const lineInfo = findNearestLine(pos);
-
-    if (lineInfo && e.altKey) {
-        // Alt+点击删除切割线
-        deleteLine(lineInfo);
-    } else if (lineInfo && !ctrl) {
-        // 开始拖动切割线（按住 Ctrl 时跳过，强制平移）
-        state.selectedLine = lineInfo.lineIndex !== undefined ? lineInfo.lineIndex : lineInfo.index;
-        state.lineType = lineInfo.type;
-        state.selectedLineValue = lineInfo.yValue;
-        state.selectedStripIndex = lineInfo.stripIndex;  // 存储列索引
-        state.isDragging = true;
-        canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
-    } else {
-        // 空白处 或 Ctrl+点击任意位置：开始平移图片
+    if (ctrl) {
+        // 强制平移模式 / Ctrl 键：忽略所有切割线和绿框
         state.isPanning = true;
         state.lastMousePos = pos;
         canvas.style.cursor = 'grabbing';
+        return;
     }
+
+    // 1) 优先检查 resize 手柄（要避开 pan force 模式）
+    const hovered = findBoxAtPos(pos);
+    if (hovered) {
+        const dir = findBoxHandle(pos, hovered.box);
+        if (dir) {
+            // 开始 resize
+            const startImg = canvasToImage(pos);
+            state.resizingBox = {
+                index: hovered.index,
+                dir,
+                startBox: { ...hovered.box },
+                startMouseImg: startImg,
+            };
+            canvas.style.cursor = resizeCursorFor(dir);
+            e.preventDefault();
+            return;
+        }
+    }
+
+    // 2) 命中绿框：Alt+点击删除；否则拖动
+    if (hovered) {
+        if (e.altKey) {
+            // Alt+点击删除绿框
+            deleteBox(hovered.index);
+            return;
+        }
+        // 开始拖动绿框
+        const imgPos = canvasToImage(pos);
+        state.draggingBox = {
+            index: hovered.index,
+            offsetX: imgPos.x - hovered.box.x_min,
+            offsetY: imgPos.y - hovered.box.y_min,
+        };
+        canvas.style.cursor = 'move';
+        e.preventDefault();
+        return;
+    }
+
+    // 3) 切割线：保持原行为（Alt+删除、否则拖动）
+    const lineInfo = findNearestLine(pos);
+    if (lineInfo && e.altKey) {
+        deleteLine(lineInfo);
+        return;
+    } else if (lineInfo) {
+        state.selectedLine = lineInfo.lineIndex !== undefined ? lineInfo.lineIndex : lineInfo.index;
+        state.lineType = lineInfo.type;
+        state.selectedLineValue = lineInfo.yValue;
+        state.selectedStripIndex = lineInfo.stripIndex;
+        state.isDragging = true;
+        canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
+        return;
+    }
+
+    // 4) 空白：平移
+    state.isPanning = true;
+    state.lastMousePos = pos;
+    canvas.style.cursor = 'grabbing';
+}
+
+function resizeCursorFor(dir) {
+    if (dir === 'n' || dir === 's') return 'ns-resize';
+    if (dir === 'e' || dir === 'w') return 'ew-resize';
+    if (dir === 'ne' || dir === 'sw') return 'nesw-resize';
+    if (dir === 'nw' || dir === 'se') return 'nwse-resize';
+    return 'move';
 }
 
 function handleMouseMove(e) {
@@ -409,6 +521,54 @@ function handleMouseMove(e) {
         state.panOffset.y += dy;
         state.lastMousePos = pos;
         drawCanvas();
+    } else if (state.draggingBox) {
+        // 拖动绿框：基于点击时记录的偏移
+        const img = canvasToImage(pos);
+        const box = state.boxes[state.draggingBox.index];
+        if (!box) { state.draggingBox = null; return; }
+        const w = box.x_max - box.x_min;
+        const h = box.y_max - box.y_min;
+        let newXmin = img.x - state.draggingBox.offsetX;
+        let newYmin = img.y - state.draggingBox.offsetY;
+        // 限制在图片范围内
+        newXmin = Math.max(0, Math.min(state.imageWidth  - w, newXmin));
+        newYmin = Math.max(0, Math.min(state.imageHeight - h, newYmin));
+        box.x_min = Math.round(newXmin);
+        box.y_min = Math.round(newYmin);
+        box.x_max = box.x_min + w;
+        box.y_max = box.y_min + h;
+        syncBoxDerived(box);
+        drawCanvas();
+        updateUI();
+    } else if (state.resizingBox) {
+        // 调整绿框大小
+        const img = canvasToImage(pos);
+        const r = state.resizingBox;
+        const box = state.boxes[r.index];
+        if (!box) { state.resizingBox = null; return; }
+        const sb = r.startBox;
+        let xMin = sb.x_min, xMax = sb.x_max, yMin = sb.y_min, yMax = sb.y_max;
+        const d = r.dir;
+        if (d.includes('w')) xMin = Math.round(img.x);
+        if (d.includes('e')) xMax = Math.round(img.x);
+        if (d.includes('n')) yMin = Math.round(img.y);
+        if (d.includes('s')) yMax = Math.round(img.y);
+        // 防止反向（保证 min<max 且最小尺寸）
+        if (xMax - xMin < MIN_BOX_DIM) {
+            if (d.includes('w')) xMin = xMax - MIN_BOX_DIM;
+            else xMax = xMin + MIN_BOX_DIM;
+        }
+        if (yMax - yMin < MIN_BOX_DIM) {
+            if (d.includes('n')) yMin = yMax - MIN_BOX_DIM;
+            else yMax = yMin + MIN_BOX_DIM;
+        }
+        box.x_min = xMin;
+        box.x_max = xMax;
+        box.y_min = yMin;
+        box.y_max = yMax;
+        clampBoxToImage(box);
+        drawCanvas();
+        updateUI();
     } else if (state.isDragging && state.selectedLine !== null) {
         // 拖动切割线
         const imagePos = canvasToImage(pos);
@@ -449,21 +609,53 @@ function handleMouseMove(e) {
         drawCanvas();
         updateUI();
     } else {
-        // 检查是否靠近切割线，更新光标
-        if (e.ctrlKey) {
+        // 没有正在拖动：刷新悬停状态 + 光标
+        const panForceEl = document.getElementById('panForceToggle');
+        const isPanForce = panForceEl && (
+            (panForceEl.tagName === 'BUTTON' && panForceEl.classList.contains('active')) ||
+            (panForceEl.tagName === 'INPUT' && panForceEl.checked)
+        );
+        if (e.ctrlKey || isPanForce) {
             canvas.style.cursor = 'grab';
+            setHoveredBox(null);
         } else {
-            const lineInfo = findNearestLine(pos);
-            if (lineInfo) {
-                canvas.style.cursor = lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize';
+            const hit = findBoxAtPos(pos);
+            if (hit) {
+                setHoveredBox(hit);
+                // 进一步判断是否在某个手柄上
+                const dir = findBoxHandle(pos, hit.box);
+                canvas.style.cursor = dir ? resizeCursorFor(dir) : 'move';
             } else {
-                canvas.style.cursor = 'grab';
+                setHoveredBox(null);
+                const lineInfo = findNearestLine(pos);
+                canvas.style.cursor = lineInfo
+                    ? (lineInfo.type === 'vertical' ? 'ew-resize' : 'ns-resize')
+                    : 'grab';
             }
         }
     }
 }
 
+function setHoveredBox(hb) {
+    const prevIdx = state.hoveredBox ? state.hoveredBox.index : -1;
+    const newIdx = hb ? hb.index : -1;
+    state.hoveredBox = hb;
+    // 仅在悬停变化时重绘（避免每次 mousemove 都全量 redraw）
+    if (prevIdx !== newIdx && !state.draggingBox && !state.resizingBox) {
+        drawCanvas();
+    }
+}
+
 function handleMouseUp(e) {
+    // 拖动绿框结束：标记检测过期
+    if (state.draggingBox) {
+        markBoxModified();
+        state.draggingBox = null;
+    }
+    if (state.resizingBox) {
+        markBoxModified();
+        state.resizingBox = null;
+    }
     state.isDragging = false;
     state.isPanning = false;
     state.selectedLine = null;
@@ -477,6 +669,13 @@ function handleDoubleClick(e) {
 
     const pos = getCanvasPosition(e);
     const imagePos = canvasToImage(pos);
+
+    // 双击命中绿框：打开编辑模态（优先于切割线添加）
+    const hit = findBoxAtPos(pos);
+    if (hit) {
+        openEditBoxModal(hit.index);
+        return;
+    }
 
     // Shift+双击：添加竖向切割线
     if (e.shiftKey) {
@@ -498,6 +697,29 @@ function handleDoubleClick(e) {
 
     // 普通双击：添加横向切割线到当前列
     addHorizontalLineAt(imagePos.y, stripIndex);
+}
+
+// 删除指定索引的绿框
+function deleteBox(index) {
+    if (index < 0 || index >= state.boxes.length) return;
+    state.boxes.splice(index, 1);
+    // 同步主集（如果在过滤场景下，按对应 id 同步）
+    if (masterBoxes && masterBoxes.length > 0) {
+        // state.boxes 是 masterBoxes 的子集；按对象引用删除
+        // 简单处理：仅在主集与当前完全一致时同步删除（避免误删）
+        if (masterBoxes.length === state.boxes.length + 1) {
+            const removed = state.boxes.length === 0
+                || masterBoxes[index] !== state.boxes[Math.min(index, state.boxes.length - 1)];
+            if (removed) {
+                masterBoxes.splice(index, 1);
+                persistMasterBoxes();
+            }
+        }
+    }
+    markBoxModified();
+    drawCanvas();
+    updateUI();
+    showToast('已删除绿框');
 }
 
 // 在指定列添加横向切割线
@@ -592,6 +814,84 @@ function findNearestLine(pos) {
     }
 
     return null;
+}
+
+// 判断屏幕坐标 pos 是否在某个绿框内；返回最上层的 {index, box}，否则 null
+function findBoxAtPos(pos) {
+    if (!state.boxes || state.boxes.length === 0) return null;
+    const { x: offsetX, y: offsetY } = state.drawOffset || getDrawParams();
+    const scale = state.drawScale || state.originalScale * state.zoomLevel;
+
+    // 从后往前找：靠后的（索引大）视为顶层
+    for (let i = state.boxes.length - 1; i >= 0; i--) {
+        const box = state.boxes[i];
+        const x = offsetX + box.x_min * scale;
+        const y = offsetY + box.y_min * scale;
+        const w = box.width * scale;
+        const h = box.height * scale;
+        if (pos.x >= x && pos.x <= x + w && pos.y >= y && pos.y <= y + h) {
+            return { index: i, box };
+        }
+    }
+    return null;
+}
+
+// 判断屏幕坐标 pos 是否在 box 的某个 resize 手柄上；返回方向字符串或 null
+function findBoxHandle(pos, box) {
+    if (!box) return null;
+    const { x: offsetX, y: offsetY } = state.drawOffset || getDrawParams();
+    const scale = state.drawScale || state.originalScale * state.zoomLevel;
+
+    const x = offsetX + box.x_min * scale;
+    const y = offsetY + box.y_min * scale;
+    const w = box.width * scale;
+    const h = box.height * scale;
+
+    // 手柄命中半径（与 findNearestLine 阈值同思路）
+    const threshold = Math.max(8, 6 / state.zoomLevel);
+    const candidates = [
+        { dir: 'nw', cx: x,         cy: y         },
+        { dir: 'n',  cx: x + w / 2, cy: y         },
+        { dir: 'ne', cx: x + w,     cy: y         },
+        { dir: 'e',  cx: x + w,     cy: y + h / 2 },
+        { dir: 'se', cx: x + w,     cy: y + h     },
+        { dir: 's',  cx: x + w / 2, cy: y + h     },
+        { dir: 'sw', cx: x,         cy: y + h     },
+        { dir: 'w',  cx: x,         cy: y + h / 2 },
+    ];
+    for (const c of candidates) {
+        if (Math.abs(pos.x - c.cx) <= threshold && Math.abs(pos.y - c.cy) <= threshold) {
+            return c.dir;
+        }
+    }
+    return null;
+}
+
+// 绿框被改动后：标记检测过期（提示用户重识别）
+function markBoxModified() {
+    state.detectionStale = true;
+    detectBtn.classList.add('btn-detect-stale');
+}
+
+// 更新单个 box 的派生字段（x_max / width / height / center_* / area）
+function syncBoxDerived(box) {
+    box.width  = box.x_max - box.x_min;
+    box.height = box.y_max - box.y_min;
+    box.center_x = (box.x_min + box.x_max) / 2;
+    box.center_y = (box.y_min + box.y_max) / 2;
+    box.area = box.width * box.height;
+}
+
+// 把 box 限制在图片范围内（最小尺寸 MIN_BOX_DIM）
+const MIN_BOX_DIM = 5;
+function clampBoxToImage(box) {
+    box.x_min = Math.max(0, Math.min(state.imageWidth  - MIN_BOX_DIM, box.x_min));
+    box.x_max = Math.max(MIN_BOX_DIM, Math.min(state.imageWidth,  box.x_max));
+    box.y_min = Math.max(0, Math.min(state.imageHeight - MIN_BOX_DIM, box.y_min));
+    box.y_max = Math.max(MIN_BOX_DIM, Math.min(state.imageHeight, box.y_max));
+    if (box.x_max - box.x_min < MIN_BOX_DIM) box.x_max = box.x_min + MIN_BOX_DIM;
+    if (box.y_max - box.y_min < MIN_BOX_DIM) box.y_max = box.y_min + MIN_BOX_DIM;
+    syncBoxDerived(box);
 }
 
 function addLineAt(type, position) {
@@ -1540,4 +1840,83 @@ function applyGreenBoxFilter() {
 function resetGreenBoxFilter() {
     // 重置 = 直接调用开始识别逻辑
     handleDetect();
+}
+
+// ============== 单个绿框编辑模态 ==============
+
+// 当前正在编辑的绿框索引（模态打开时锁定）
+let editingBoxIndex = -1;
+
+function initEditBoxModal() {
+    const modal = document.getElementById('editBoxModal');
+    if (!modal) return;
+    // 关闭按钮
+    modal.querySelectorAll('[data-close="edit-modal-close"]').forEach(btn => {
+        btn.addEventListener('click', () => { modal.style.display = 'none'; });
+    });
+    // 确定按钮
+    const okBtn = document.getElementById('editBoxOkBtn');
+    if (okBtn) okBtn.addEventListener('click', applyEditBox);
+}
+
+function openEditBoxModal(index) {
+    const modal = document.getElementById('editBoxModal');
+    if (!modal) return;
+    if (index < 0 || index >= state.boxes.length) return;
+    const box = state.boxes[index];
+    editingBoxIndex = index;
+
+    // 预填当前值
+    const setVal = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.value = v;
+    };
+    setVal('editBoxXInput', box.x_min);
+    setVal('editBoxYInput', box.y_min);
+    setVal('editBoxWInput', box.width);
+    setVal('editBoxHInput', box.height);
+    setVal('editBoxInfo', `#${index + 1} / 共 ${state.boxes.length} 个`);
+
+    // 设置输入框上限（图片边界）
+    const maxX = state.imageWidth, maxY = state.imageHeight;
+    const xInput = document.getElementById('editBoxXInput');
+    const yInput = document.getElementById('editBoxYInput');
+    const wInput = document.getElementById('editBoxWInput');
+    const hInput = document.getElementById('editBoxHInput');
+    if (xInput) xInput.max = maxX;
+    if (yInput) yInput.max = maxY;
+    if (wInput) wInput.max = maxX;
+    if (hInput) hInput.max = maxY;
+
+    modal.style.display = 'block';
+}
+
+function applyEditBox() {
+    if (editingBoxIndex < 0 || editingBoxIndex >= state.boxes.length) return;
+    const box = state.boxes[editingBoxIndex];
+
+    const get = id => parseInt(document.getElementById(id).value, 10);
+    const x = get('editBoxXInput');
+    const y = get('editBoxYInput');
+    const w = get('editBoxWInput');
+    const h = get('editBoxHInput');
+    if ([x, y, w, h].some(v => !Number.isFinite(v) || v < 0)) {
+        showToast('请输入有效的非负整数');
+        return;
+    }
+    if (w < MIN_BOX_DIM || h < MIN_BOX_DIM) {
+        showToast(`宽和高至少 ${MIN_BOX_DIM} px`);
+        return;
+    }
+
+    box.x_min = x;
+    box.y_min = y;
+    box.x_max = x + w;
+    box.y_max = y + h;
+    clampBoxToImage(box);
+    markBoxModified();
+    drawCanvas();
+    updateUI();
+    document.getElementById('editBoxModal').style.display = 'none';
+    showToast('已应用编辑');
 }

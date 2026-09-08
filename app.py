@@ -475,6 +475,7 @@ def apply_cuts():
         cut_images.append({
             'index': idx,
             'filename': piece_filename,
+            'image_url': f'/output/{image_hash}/{piece_filename}',
             'x': x1, 'y': y1,
             'width': x2 - x1,
             'height': y2 - y1,

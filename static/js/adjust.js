@@ -574,7 +574,13 @@ function setupCanvasEvents(canvas) {
     canvas.onmousedown = handleMouseDown;
     canvas.onmousemove = handleMouseMove;
     canvas.onmouseup = handleMouseUp;
-    canvas.onmouseleave = handleMouseUp;
+    canvas.onmouseleave = (e) => {
+        handleMouseUp(e);
+        // 鼠标离开：清除画笔光标（避免红圈残留）
+        if (canvasState.brushMode) {
+            redrawCanvas();
+        }
+    };
 }
 
 // 将鼠标坐标转换为canvas内部坐标
@@ -727,28 +733,27 @@ function handleMouseUp(e) {
     canvasState.dragEdge = null;
 }
 
-// 绘制画笔圆形光标（canvas 坐标，红色固定）
+// 绘制画笔圆形光标（画在 overlay 层，与笔触同层）
 function drawBrushCursor(x, y) {
-    const canvas = document.getElementById('adjustCanvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const overlayCtx = canvasState.overlayCtx;
+    if (!overlayCtx) return;
     const sizeInput = document.getElementById('brushSizeInput');
     if (!sizeInput) return;
-    // sizeInput 是图片坐标（像素），需要 × scale 转为 canvas 坐标
+    // 画在主 canvas 坐标上（overlay 与主 canvas 同尺寸）
     const imgSize = parseInt(sizeInput.value, 10) || 1;
     const radius = (imgSize * canvasState.scale) / 2;
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.strokeStyle = '#e74c3c';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    overlayCtx.save();
+    overlayCtx.beginPath();
+    overlayCtx.arc(x, y, radius, 0, Math.PI * 2);
+    overlayCtx.strokeStyle = '#e74c3c';
+    overlayCtx.lineWidth = 2;
+    overlayCtx.stroke();
     // 中心点
-    ctx.beginPath();
-    ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#e74c3c';
-    ctx.fill();
-    ctx.restore();
+    overlayCtx.beginPath();
+    overlayCtx.arc(x, y, 1.5, 0, Math.PI * 2);
+    overlayCtx.fillStyle = '#e74c3c';
+    overlayCtx.fill();
+    overlayCtx.restore();
 }
 
 // 在画笔覆盖层上画一个点（自动补点连线，避免快速移动时出现间断）

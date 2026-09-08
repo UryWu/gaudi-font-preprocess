@@ -709,39 +709,28 @@ function handleMouseUp(e) {
     canvasState.dragEdge = null;
 }
 
-// 绘制画笔圆形光标（canvas 坐标）
+// 绘制画笔圆形光标（canvas 坐标，红色固定）
 function drawBrushCursor(x, y) {
     const canvas = document.getElementById('adjustCanvas');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const sizeInput = document.getElementById('brushSizeInput');
-    const colorInput = document.getElementById('brushColor');
-    if (!sizeInput || !colorInput) return;
+    if (!sizeInput) return;
     // sizeInput 是图片坐标（像素），需要 × scale 转为 canvas 坐标
     const imgSize = parseInt(sizeInput.value, 10) || 1;
     const radius = (imgSize * canvasState.scale) / 2;
-    const color = colorInput.value;
-    const strokeColor = isLightColor(color) ? '#000' : color;
     ctx.save();
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.strokeStyle = strokeColor;
+    ctx.strokeStyle = '#e74c3c';
     ctx.lineWidth = 2;
     ctx.stroke();
     // 中心点
     ctx.beginPath();
     ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-    ctx.fillStyle = strokeColor;
+    ctx.fillStyle = '#e74c3c';
     ctx.fill();
     ctx.restore();
-}
-
-function isLightColor(hex) {
-    if (!hex || hex[0] !== '#') return false;
-    const r = parseInt(hex.substr(1, 2), 16);
-    const g = parseInt(hex.substr(3, 2), 16);
-    const b = parseInt(hex.substr(5, 2), 16);
-    return (r * 0.299 + g * 0.587 + b * 0.114) > 160;
 }
 
 // 在画笔覆盖层上画一个点（自动补点连线，避免快速移动时出现间断）

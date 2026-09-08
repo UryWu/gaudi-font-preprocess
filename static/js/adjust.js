@@ -64,6 +64,8 @@ function setupEventListeners() {
             canvasState.brushMode = false;
             canvasState.isPainting = false;
             updateBrushToggleButton();
+            // 强制重绘以清除残留的画笔光标圆圈（mousemove 在 keyup 时不会触发）
+            redrawCanvas();
         }
     });
     // 窗口失焦时也退出（比如 Alt+Tab 切走）

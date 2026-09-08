@@ -47,39 +47,6 @@
     gap: 10px;
 }
 
-.btn-outline-warning {
-    background-color: #fff;
-    border: 1px solid #e8a5a5;
-    color: #c0392b;
-    padding: 10px 16px;
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: pointer;
-    font-weight: 500;
-}
-
-.btn-outline-warning:hover {
-    background-color: #fff5f5;
-    border-color: #c0392b;
-}
-
-.btn-outline-danger {
-    background-color: #fff;
-    border: 1px solid #888;
-    color: #555;
-    padding: 10px 16px;
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: pointer;
-    font-weight: 500;
-}
-
-.btn-outline-danger:hover {
-    background-color: #f8e8e8;
-    border-color: #c0392b;
-    color: #c0392b;
-}
-
 .action-buttons .btn {
     padding: 10px 20px;
     border: none;
@@ -124,6 +91,15 @@
 
 .btn-warning:hover {
     background-color: #d68910;
+}
+
+.btn-danger {
+    background-color: #e74c3c;
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #c0392b;
 }
 
 .btn-outline {
@@ -185,12 +161,12 @@
             <div class="adjust-count" id="adjustInfo" style="display: none;">需要调整 <span id="adjustCount">0</span> 个</div>
         </div>
         <div class="action-buttons">
-            <button id="backBtn" class="btn btn-outline" onclick="location.href='/layout'">返回</button>
+            <button id="backBtn" class="btn btn-secondary" onclick="location.href='/layout'">返回</button>
             <button id="saveBtn" class="btn btn-success">保存</button>
             <button id="adjustBtn" class="btn btn-primary" disabled>调整</button>
             <button id="scaleBtn" class="btn btn-primary" onclick="location.href='/scale'">缩放校正 &rarr;</button>
-            <button id="clearEmptyBtn" class="btn btn-outline-warning" title="删除所有空白字符的磁盘文件和session条目">一键清除空白字符</button>
-            <button id="clearAllBtn" class="btn btn-outline-danger" title="删除该图片的全部数据：output目录、session JSON、uploads原图">清空所有数据</button>
+            <button id="clearEmptyBtn" class="btn btn-warning" title="删除所有空白字符的磁盘文件和session条目">一键清除空白字符</button>
+            <button id="clearAllBtn" class="btn btn-danger" title="删除该图片的全部数据：output目录、session JSON、uploads原图">清空所有数据</button>
         </div>
     </div>
 

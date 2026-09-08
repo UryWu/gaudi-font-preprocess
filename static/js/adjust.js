@@ -402,7 +402,7 @@ function createAdjustModal() {
                 <div class="adjust-controls">
                     <h4>操作</h4>
                     <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="resetAdjust()">重置</button>
-                    <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用切割范围</button>
+                    <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用</button>
                     <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="confirmAdjust()">确定</button>
                     <button class="btn btn-success" style="width: 100%;" onclick="saveAndNext()">保存并下一个</button>
                 </div>

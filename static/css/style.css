@@ -836,7 +836,7 @@ body {
     max-width: 90vw;
     max-height: 90vh;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
 }
 
 .modal-header {
@@ -862,14 +862,15 @@ body {
 
 .preview-area {
     flex: 1;
-    background-color: #000;
-    border-radius: 4px;
-    position: relative;
-    min-width: 300px;
-    min-height: 300px;
+    min-width: 0;
+    max-width: 65%;
     display: flex;
     align-items: center;
     justify-content: center;
+    background: #222;
+    border-radius: 4px;
+    position: relative;
+    min-height: 300px;
 }
 
 #adjustCanvas {
@@ -879,10 +880,12 @@ body {
 }
 
 .modal-sidebar {
-    width: 200px;
+    flex: 0 0 320px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 15px;
+    overflow-y: auto;
 }
 
 .adjust-controls {

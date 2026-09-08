@@ -329,41 +329,39 @@ function createAdjustModal() {
     modal.className = 'adjust-modal';
     modal.innerHTML = `
         <div class="modal-content">
-            <div class="modal-header">
-                <h3>调整字符 - <span id="modalCharIndex">1</span></h3>
-                <button class="btn btn-secondary" onclick="closeAdjustModal()">关闭</button>
+            <div class="preview-area">
+                <canvas id="adjustCanvas"></canvas>
             </div>
-            <div class="modal-body">
-                <div class="preview-area">
-                    <canvas id="adjustCanvas"></canvas>
+            <div class="modal-sidebar">
+                <div class="modal-header">
+                    <h3>调整字符 - <span id="modalCharIndex">1</span></h3>
+                    <button class="btn btn-secondary" onclick="closeAdjustModal()">关闭</button>
                 </div>
-                <div class="modal-sidebar">
-                    <div class="adjust-controls">
-                        <h4>切割范围</h4>
-                        <div class="control-row">
-                            <label>上边距</label>
-                            <input type="number" id="adjustTop" value="0" min="0">
-                        </div>
-                        <div class="control-row">
-                            <label>下边距</label>
-                            <input type="number" id="adjustBottom" value="0" min="0">
-                        </div>
-                        <div class="control-row">
-                            <label>左边距</label>
-                            <input type="number" id="adjustLeft" value="0" min="0">
-                        </div>
-                        <div class="control-row">
-                            <label>右边距</label>
-                            <input type="number" id="adjustRight" value="0" min="0">
-                        </div>
+                <div class="adjust-controls">
+                    <h4>切割范围</h4>
+                    <div class="control-row">
+                        <label>上边距</label>
+                        <input type="number" id="adjustTop" value="0" min="0">
                     </div>
-                    <div class="adjust-controls">
-                        <h4>操作</h4>
-                        <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="resetAdjust()">重置</button>
-                        <button class="btn btn-primary" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用</button>
-                        <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="confirmAdjust()">确定</button>
-                        <button class="btn btn-success" style="width: 100%;" onclick="saveAndNext()">保存并下一个</button>
+                    <div class="control-row">
+                        <label>下边距</label>
+                        <input type="number" id="adjustBottom" value="0" min="0">
                     </div>
+                    <div class="control-row">
+                        <label>左边距</label>
+                        <input type="number" id="adjustLeft" value="0" min="0">
+                    </div>
+                    <div class="control-row">
+                        <label>右边距</label>
+                        <input type="number" id="adjustRight" value="0" min="0">
+                    </div>
+                </div>
+                <div class="adjust-controls">
+                    <h4>操作</h4>
+                    <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="resetAdjust()">重置</button>
+                    <button class="btn btn-primary" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用</button>
+                    <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="confirmAdjust()">确定</button>
+                    <button class="btn btn-success" style="width: 100%;" onclick="saveAndNext()">保存并下一个</button>
                 </div>
             </div>
         </div>
@@ -384,8 +382,8 @@ function loadCharToCanvas(char) {
         // 保存图片对象
         canvasState.img = img;
 
-        // 设置 canvas 大小
-        const maxSize = 500;
+        // 设置 canvas 大小（缩小到 440 让 4 条红色边界线在 modal 内完整可见）
+        const maxSize = 440;
         canvasState.scale = Math.min(maxSize / img.width, maxSize / img.height);
         canvas.width = img.width * canvasState.scale;
         canvas.height = img.height * canvasState.scale;

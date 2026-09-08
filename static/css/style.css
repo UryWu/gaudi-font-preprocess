@@ -743,6 +743,14 @@ body {
     cursor: pointer;
     transition: transform 0.2s, box-shadow 0.2s;
     aspect-ratio: 1;
+    /* 性能优化：跳过视口外的 layout/paint + 懒加载图片 */
+    content-visibility: auto;
+    contain-intrinsic-size: 0 160px;
+}
+
+.char-card img {
+    /* 浏览器原生懒加载：视口外的图片不发起请求 */
+    loading: lazy;
 }
 
 .char-card:hover {

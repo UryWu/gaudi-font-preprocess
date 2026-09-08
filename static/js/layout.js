@@ -526,12 +526,14 @@ function handleMouseDown(e) {
     if (e.button !== 0) return;
 
     // 「合并绿框」工具：激活时（且未开启强制平移），左键开始画橡皮框
+    // 快捷键 Ctrl+Alt + 左键拖动直接进入合并（无需先点按钮）
     const panForceElForMerge = document.getElementById('panForceToggle');
     const isPanForceForMerge = panForceElForMerge && (
         (panForceElForMerge.tagName === 'BUTTON' && panForceElForMerge.classList.contains('active')) ||
         (panForceElForMerge.tagName === 'INPUT' && panForceElForMerge.checked)
     );
-    if (state.mergeMode && !isPanForceForMerge) {
+    const isMergeShortcut = e.ctrlKey && e.altKey;
+    if ((state.mergeMode && !isPanForceForMerge) || isMergeShortcut) {
         pushHistory();  // 合并操作前回退点
         const startImg = canvasToImage(pos);
         state.merging = true;

@@ -32,6 +32,14 @@ const state = {
     mergeMode: false,      // 「合并绿框」工具是否激活
     merging: false,        // 正在拖橡皮框（合并工具的中间态）
     mergeRect: null,       // 拖拽中的橡皮框 {x1,y1,x2,y2}（图片坐标）
+    selecting: false,      // 正在拖框选橡皮框（Alt+左键拖动）
+    selectionRect: null,   // 框选橡皮框 {x1,y1,x2,y2}（图片坐标）
+    selectedItems: {       // 当前选中项（与合并模式互斥）
+        verticalLines: [],         // verticalLines 索引数组
+        stripLines: [],            // {strip_index, h_index} 数组
+        boxes: [],                 // state.boxes 索引数组
+    },
+    movingSelection: false, // 正在拖动已选中项（鼠标未按 Alt）
     history: [],           // 撤销栈：每项为当前 state 的快照（修改前）
     historyRedo: [],       // 重做栈：撤销后保存的状态
 };
@@ -210,6 +218,26 @@ function setupEventListeners() {
     // 撤销 / 重做
     if (undoBtn) undoBtn.addEventListener('click', undo);
     if (redoBtn) redoBtn.addEventListener('click', redo);
+
+    // 删除键：删除框选中的项
+    document.addEventListener('keydown', (e) => {
+        // 焦点在 input/textarea 时不拦截
+        const tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) {
+            return;
+        }
+        if (e.key === 'Delete') {
+            if (hasSelection()) {
+                e.preventDefault();
+                deleteSelectedItems();
+            }
+        } else if (e.key === 'Backspace') {
+            if (hasSelection()) {
+                e.preventDefault();
+                deleteSelectedItems();
+            }
+        }
+    });
 }
 
 function resizeCanvas() {
@@ -364,6 +392,9 @@ function drawCanvas() {
 
     // 绘制切割线
     drawCutLines();
+
+    // 绘制选中项高亮（叠加在最上层）
+    drawSelectionHighlights();
 }
 
 function drawTextBoxes() {
@@ -543,6 +574,23 @@ function handleMouseDown(e) {
         return;
     }
 
+    // 「框选」工具：Alt + 左键拖动（无 Ctrl）→ 画橡皮框选
+    // 仅当起点不在绿框/切割线/手柄上时触发，避免与 Alt+点击删除冲突
+    if (e.altKey && !e.ctrlKey) {
+        const boxHit = findBoxAtPos(pos);
+        const lineHit = findNearestLine(pos);
+        const handleHit = boxHit ? findBoxHandle(pos, boxHit.box) : null;
+        if (!boxHit && !lineHit && !handleHit) {
+            const startImg = canvasToImage(pos);
+            state.selecting = true;
+            state.selectionRect = { x1: startImg.x, y1: startImg.y, x2: startImg.x, y2: startImg.y };
+            canvas.style.cursor = 'crosshair';
+            e.preventDefault();
+            return;
+        }
+        // 否则落回原有 Alt+点击删除流程
+    }
+
     // 「强制平移」按钮：激活时所有左键都视为平移
     const panForceEl = document.getElementById('panForceToggle');
     const isPanForce = panForceEl && (
@@ -615,7 +663,16 @@ function handleMouseDown(e) {
         return;
     }
 
-    // 4) 空白：平移
+    // 4) 空白：若已有选中项则拖动选中项；否则平移
+    if (hasSelection() && !e.altKey) {
+        pushHistory();  // 选中项移动前回退点
+        const startImg = canvasToImage(pos);
+        state.movingSelection = true;
+        state.selectionDragStart = startImg;
+        canvas.style.cursor = 'move';
+        e.preventDefault();
+        return;
+    }
     state.isPanning = true;
     state.lastMousePos = pos;
     canvas.style.cursor = 'grabbing';
@@ -641,6 +698,30 @@ function handleMouseMove(e) {
         state.mergeRect.y2 = img.y;
         drawCanvas();
         drawMergeRect();
+        return;
+    }
+
+    // 框选工具：实时更新框选橡皮框
+    if (state.selecting && state.selectionRect) {
+        const img = canvasToImage(pos);
+        state.selectionRect.x2 = img.x;
+        state.selectionRect.y2 = img.y;
+        drawCanvas();
+        drawSelectionRect();
+        return;
+    }
+
+    // 拖动选中项：基于点击时记录的起点计算 dx/dy，整体移动
+    if (state.movingSelection && state.selectionDragStart) {
+        const img = canvasToImage(pos);
+        const dx = img.x - state.selectionDragStart.x;
+        const dy = img.y - state.selectionDragStart.y;
+        if (dx === 0 && dy === 0) return;
+        moveSelectedItems(dx, dy);
+        // 把起点前移到当前位置（增量式移动）
+        state.selectionDragStart = img;
+        drawCanvas();
+        updateUI();
         return;
     }
 
@@ -784,6 +865,29 @@ function handleMouseUp(e) {
         state.merging = false;
         state.mergeRect = null;
         exitMergeMode();
+        return;
+    }
+
+    // 框选工具：松手即计算选中项
+    if (state.selecting) {
+        state.selecting = false;
+        const r = state.selectionRect;
+        state.selectionRect = null;
+        // 最小尺寸阈值
+        const MIN_SEL_SIZE = 3;
+        if (r && (Math.abs(r.x2 - r.x1) >= MIN_SEL_SIZE || Math.abs(r.y2 - r.y1) >= MIN_SEL_SIZE)) {
+            computeSelection(r);
+        }
+        drawCanvas();
+        canvas.style.cursor = 'grab';
+        return;
+    }
+
+    // 拖动选中项结束
+    if (state.movingSelection) {
+        state.movingSelection = false;
+        state.selectionDragStart = null;
+        canvas.style.cursor = 'grab';
         return;
     }
     // 拖动绿框结束：标记检测过期
@@ -2196,4 +2300,317 @@ function performMerge() {
     drawCanvas();
     updateUI();
     showToast(`已合并 ${inside.length} 个绿框`);
+}
+
+// ============== 框选工具（Alt+左键拖动） ==============
+
+// 是否有已选中项
+function hasSelection() {
+    const s = state.selectedItems;
+    if (!s) return false;
+    return (s.verticalLines && s.verticalLines.length > 0) ||
+           (s.stripLines && s.stripLines.length > 0) ||
+           (s.boxes && s.boxes.length > 0);
+}
+
+// 清空当前选中
+function clearSelection() {
+    state.selectedItems = { verticalLines: [], stripLines: [], boxes: [] };
+}
+
+// 把屏幕坐标的橡皮框绘制出来（叠加在已渲染的 canvas 之上）
+function drawSelectionRect() {
+    if (!state.selectionRect) return;
+    const r = state.selectionRect;
+    const { x: offsetX, y: offsetY } = state.drawOffset || getDrawParams();
+    const scale = state.drawScale || state.originalScale * state.zoomLevel;
+
+    const x1 = offsetX + r.x1 * scale;
+    const y1 = offsetY + r.y1 * scale;
+    const x2 = offsetX + r.x2 * scale;
+    const y2 = offsetY + r.y2 * scale;
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(241, 196, 15, 0.18)';   // 黄色半透明填充
+    ctx.strokeStyle = '#f1c40f';                  // 黄色实线
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 3]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+}
+
+// 计算落入橡皮框内的所有项：红线 / 蓝线（按列）/ 绿框
+function computeSelection(rect) {
+    if (!rect) return;
+    const rxMin = Math.min(rect.x1, rect.x2);
+    const rxMax = Math.max(rect.x1, rect.x2);
+    const ryMin = Math.min(rect.y1, rect.y2);
+    const ryMax = Math.max(rect.y1, rect.y2);
+
+    const sel = { verticalLines: [], stripLines: [], boxes: [] };
+
+    // 红线（纵向）：x 落在 [rxMin, rxMax]
+    state.verticalLines.forEach((x, i) => {
+        if (x >= rxMin && x <= rxMax) sel.verticalLines.push(i);
+    });
+
+    // 蓝线（按列横向）：仅当列的 x 范围与橡皮框 x 范围相交时考虑；h_line 落在 [ryMin, ryMax]
+    if (state.stripHorizontalLines && state.stripHorizontalLines.length > 0) {
+        state.stripHorizontalLines.forEach((strip, sIdx) => {
+            if (strip.x_end < rxMin || strip.x_start > rxMax) return;  // 列不与橡皮框相交
+            strip.horizontal_lines.forEach((y, hIdx) => {
+                if (y >= ryMin && y <= ryMax) {
+                    sel.stripLines.push({ strip_index: sIdx, h_index: hIdx });
+                }
+            });
+        });
+    } else {
+        // 兼容旧数据：horizontalLines 直接按 y 判断
+        state.horizontalLines.forEach((y, i) => {
+            if (y >= ryMin && y <= ryMax) {
+                sel.stripLines.push({ strip_index: -1, h_index: i });
+            }
+        });
+    }
+
+    // 绿框：中心点在橡皮框内
+    state.boxes.forEach((box, i) => {
+        const cx = (box.x_min + box.x_max) / 2;
+        const cy = (box.y_min + box.y_max) / 2;
+        if (cx >= rxMin && cx <= rxMax && cy >= ryMin && cy <= ryMax) {
+            sel.boxes.push(i);
+        }
+    });
+
+    state.selectedItems = sel;
+}
+
+// 在 canvas 上叠加高亮：选中红线加粗、选中蓝线加粗、选中绿框换色 + 描边
+function drawSelectionHighlights() {
+    const sel = state.selectedItems;
+    if (!sel) return;
+    const hasAny = (sel.verticalLines && sel.verticalLines.length > 0) ||
+                   (sel.stripLines && sel.stripLines.length > 0) ||
+                   (sel.boxes && sel.boxes.length > 0);
+    if (!hasAny) return;
+
+    const { x: offsetX, y: offsetY } = state.drawOffset || getDrawParams();
+    const scale = state.drawScale || state.originalScale * state.zoomLevel;
+
+    ctx.save();
+    ctx.setLineDash([]);
+
+    // 选中红线（纵向）：黄色加粗
+    if (sel.verticalLines && sel.verticalLines.length > 0) {
+        ctx.strokeStyle = '#f1c40f';
+        ctx.lineWidth = 4 / state.zoomLevel;
+        sel.verticalLines.forEach(i => {
+            const x = offsetX + state.verticalLines[i] * scale;
+            ctx.beginPath();
+            ctx.moveTo(x, offsetY);
+            ctx.lineTo(x, offsetY + state.imageHeight * scale);
+            ctx.stroke();
+        });
+    }
+
+    // 选中蓝线（按列）：黄色加粗
+    if (sel.stripLines && sel.stripLines.length > 0 && state.stripHorizontalLines) {
+        ctx.strokeStyle = '#f1c40f';
+        ctx.lineWidth = 4 / state.zoomLevel;
+        sel.stripLines.forEach(item => {
+            if (item.strip_index < 0 || item.strip_index >= state.stripHorizontalLines.length) return;
+            const strip = state.stripHorizontalLines[item.strip_index];
+            if (!strip) return;
+            const y = strip.horizontal_lines[item.h_index];
+            if (y === undefined) return;
+            const xStart = offsetX + strip.x_start * scale;
+            const xEnd = offsetX + strip.x_end * scale;
+            const canvasY = offsetY + y * scale;
+            ctx.beginPath();
+            ctx.moveTo(xStart, canvasY);
+            ctx.lineTo(xEnd, canvasY);
+            ctx.stroke();
+        });
+    }
+
+    // 选中绿框：黄色描边 + 半透明填充
+    if (sel.boxes && sel.boxes.length > 0) {
+        ctx.fillStyle = 'rgba(241, 196, 15, 0.25)';
+        ctx.strokeStyle = '#f1c40f';
+        ctx.lineWidth = 3 / state.zoomLevel;
+        sel.boxes.forEach(i => {
+            const box = state.boxes[i];
+            if (!box) return;
+            const x = offsetX + box.x_min * scale;
+            const y = offsetY + box.y_min * scale;
+            const w = box.width * scale;
+            const h = box.height * scale;
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeRect(x, y, w, h);
+        });
+    }
+
+    ctx.restore();
+}
+
+// 把选中项整体移动（dx, dy 为图片坐标位移）
+// verticalLines.shift by dx；stripLines 内部 h_line shift by dy；boxes shift by both
+function moveSelectedItems(dx, dy) {
+    const sel = state.selectedItems;
+    if (!sel) return;
+
+    // 红线：仅移动内部红线，边界线不动；同时同步 stripHorizontalLines 中相邻列的边界
+    if (sel.verticalLines && sel.verticalLines.length > 0) {
+        const movedIdxSet = new Set(sel.verticalLines);
+        sel.verticalLines.forEach(i => {
+            const oldX = state.verticalLines[i];
+            const newX = Math.max(0, Math.min(state.imageWidth, Math.round(oldX + dx)));
+            state.verticalLines[i] = newX;
+        });
+        // 同步相邻 strip 的 x_start / x_end
+        if (state.stripHorizontalLines && state.stripHorizontalLines.length > 0) {
+            movedIdxSet.forEach(idx => {
+                if (idx > 0 && idx - 1 < state.stripHorizontalLines.length) {
+                    state.stripHorizontalLines[idx - 1].x_end = state.verticalLines[idx];
+                }
+                if (idx < state.stripHorizontalLines.length) {
+                    state.stripHorizontalLines[idx].x_start = state.verticalLines[idx];
+                }
+            });
+            // 重新排序以保持 verticalLines 升序，并重映射 sel.verticalLines
+            const indexed = state.verticalLines.map((x, i) => ({ x, sel: movedIdxSet.has(i) }));
+            indexed.sort((a, b) => a.x - b.x);
+            const newSelV = [];
+            indexed.forEach((o, newIdx) => { if (o.sel) newSelV.push(newIdx); });
+            state.verticalLines = indexed.map(o => o.x);
+            sel.verticalLines = newSelV;
+            // strip 数应等于 verticalLines.length - 1；按现有数据重建
+            updateStripHorizontalLines();
+        }
+    }
+
+    // 蓝线（按列）：按 (strip_index, old_y) 记录，移动后按 old_y → new_y 重定位 h_index
+    if (sel.stripLines && sel.stripLines.length > 0 && state.stripHorizontalLines) {
+        // 记录每个选中项的旧 y
+        const snapshots = [];
+        sel.stripLines.forEach(item => {
+            if (item.strip_index < 0 || item.strip_index >= state.stripHorizontalLines.length) return;
+            const strip = state.stripHorizontalLines[item.strip_index];
+            if (!strip || item.h_index < 0 || item.h_index >= strip.horizontal_lines.length) return;
+            snapshots.push({ strip_index: item.strip_index, old_y: strip.horizontal_lines[item.h_index] });
+        });
+
+        // 按列分组 old_y 集合
+        const byStrip = new Map();
+        snapshots.forEach(s => {
+            if (!byStrip.has(s.strip_index)) byStrip.set(s.strip_index, new Set());
+            byStrip.get(s.strip_index).add(s.old_y);
+        });
+
+        // 应用平移
+        byStrip.forEach((ySet, sIdx) => {
+            const strip = state.stripHorizontalLines[sIdx];
+            if (!strip) return;
+            const newLines = strip.horizontal_lines.map(y => ySet.has(y)
+                ? Math.max(0, Math.min(state.imageHeight, Math.round(y + dy)))
+                : y);
+            // 去重：若 newLines 与剩余 y 冲突，回退到原 y（极小概率）
+            strip.horizontal_lines = newLines.sort((a, b) => a - b);
+        });
+
+        // 按 old_y 重定位 h_index：通过 (strip_index, new_y) 重新查找
+        const movedPairs = snapshots.map(s => ({
+            strip_index: s.strip_index,
+            new_y: Math.max(0, Math.min(state.imageHeight, Math.round(s.old_y + dy))),
+        }));
+        const newSelStrip = [];
+        movedPairs.forEach(p => {
+            const strip = state.stripHorizontalLines[p.strip_index];
+            if (!strip) return;
+            const newIdx = strip.horizontal_lines.indexOf(p.new_y);
+            if (newIdx >= 0) newSelStrip.push({ strip_index: p.strip_index, h_index: newIdx });
+        });
+        sel.stripLines = newSelStrip;
+    }
+
+    // 绿框：dx + dy，clamp 到图片范围
+    if (sel.boxes && sel.boxes.length > 0) {
+        sel.boxes.forEach(i => {
+            const box = state.boxes[i];
+            if (!box) return;
+            const w = box.x_max - box.x_min;
+            const h = box.y_max - box.y_min;
+            let nx = Math.round(box.x_min + dx);
+            let ny = Math.round(box.y_min + dy);
+            nx = Math.max(0, Math.min(state.imageWidth  - w, nx));
+            ny = Math.max(0, Math.min(state.imageHeight - h, ny));
+            box.x_min = nx;
+            box.y_min = ny;
+            box.x_max = nx + w;
+            box.y_max = ny + h;
+            syncBoxDerived(box);
+        });
+        markBoxModified();
+    }
+}
+
+// 删除选中项：verticalLines / stripLines / boxes
+function deleteSelectedItems() {
+    const sel = state.selectedItems;
+    if (!hasSelection()) return;
+
+    pushHistory();
+
+    // 删除绿框：按索引从大到小删
+    if (sel.boxes && sel.boxes.length > 0) {
+        const indicesToRemove = new Set(sel.boxes);
+        state.boxes = state.boxes.filter((_, i) => !indicesToRemove.has(i));
+        markBoxModified();
+    }
+
+    // 删除红线：边界线不动
+    if (sel.verticalLines && sel.verticalLines.length > 0) {
+        const removable = sel.verticalLines.filter(i => i > 0 && i < state.verticalLines.length - 1);
+        if (removable.length > 0) {
+            const removableSet = new Set(removable);
+            state.verticalLines = state.verticalLines.filter((_, i) => !removableSet.has(i));
+            updateStripHorizontalLines();
+        }
+    }
+
+    // 删除蓝线（按列）：排除 0 和 imageHeight 边界
+    if (sel.stripLines && sel.stripLines.length > 0 && state.stripHorizontalLines) {
+        // 记录每条线的 y 值（先按 strip_index + h_index 读，再合并移除）
+        const yByStrip = new Map();
+        sel.stripLines.forEach(item => {
+            if (item.strip_index < 0 || item.strip_index >= state.stripHorizontalLines.length) return;
+            const strip = state.stripHorizontalLines[item.strip_index];
+            if (!strip || item.h_index < 0 || item.h_index >= strip.horizontal_lines.length) return;
+            const y = strip.horizontal_lines[item.h_index];
+            if (y === 0 || y === state.imageHeight) return;  // 边界线不动
+            if (!yByStrip.has(item.strip_index)) yByStrip.set(item.strip_index, new Set());
+            yByStrip.get(item.strip_index).add(y);
+        });
+        yByStrip.forEach((ySet, sIdx) => {
+            const strip = state.stripHorizontalLines[sIdx];
+            if (!strip) return;
+            strip.horizontal_lines = strip.horizontal_lines.filter(y => !ySet.has(y));
+        });
+        // 同步兼容旧数据 horizontalLines
+        if (state.horizontalLines && state.horizontalLines.length > 0) {
+            const allYToRemove = new Set();
+            yByStrip.forEach(ySet => ySet.forEach(y => allYToRemove.add(y)));
+            state.horizontalLines = state.horizontalLines.filter(y => !allYToRemove.has(y));
+        }
+    }
+
+    clearSelection();
+    drawCanvas();
+    updateUI();
+    showToast('已删除选中项');
 }

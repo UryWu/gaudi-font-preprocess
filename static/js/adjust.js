@@ -44,15 +44,16 @@ function setupEventListeners() {
     // 按钮点击 → 平滑滚动到页面顶端 / 底端
     const floatTopBtn = document.getElementById('floatTopBtn');
     const floatBottomBtn = document.getElementById('floatBottomBtn');
+    // 真正滚动的是 .char-grid-container（body overflow:hidden）
+    const scrollTarget = document.querySelector('.char-grid-container');
     if (floatTopBtn) {
         floatTopBtn.addEventListener('click', () => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            if (scrollTarget) scrollTarget.scrollTo({ top: 0, behavior: 'smooth' });
         });
     }
     if (floatBottomBtn) {
         floatBottomBtn.addEventListener('click', () => {
-            // scrollHeight 是整个文档的总高度，足够滚到最底
-            window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+            if (scrollTarget) scrollTarget.scrollTo({ top: scrollTarget.scrollHeight, behavior: 'smooth' });
         });
     }
 

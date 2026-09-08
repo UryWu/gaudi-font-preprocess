@@ -155,7 +155,6 @@ function setupEventListeners() {
     canvas.addEventListener('mouseleave', handleMouseUp);
     canvas.addEventListener('dblclick', handleDoubleClick);
     canvas.addEventListener('wheel', handleWheel, { passive: false });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());  // 禁止右键菜单
 
     // 窗口大小变化
     window.addEventListener('resize', resizeCanvas);
@@ -522,15 +521,6 @@ function handleMouseDown(e) {
     if (!state.imageObj) return;
 
     const pos = getCanvasPosition(e);
-
-    // 右键：平移
-    if (e.button === 2) {
-        state.isPanning = true;
-        state.lastMousePos = pos;
-        canvas.style.cursor = 'grabbing';
-        e.preventDefault();
-        return;
-    }
 
     // 左键处理
     if (e.button !== 0) return;

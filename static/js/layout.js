@@ -721,21 +721,21 @@ function updateUI() {
     document.getElementById('boxCount').textContent = bCount;
 
     // 根据三色勾选状态计算预计切割
-    // 三勾选：去重后绿框胜出（框在格里时保留框），最终数量≈绿框数
-    // 单绿框：直接 = boxes 数
+    // 三勾选或单绿框：实际去重后 ≥ max(boxes, grid)，取上界
     // 双勾选网格：= (v-1) × (h-1)
+    const gridCount = Math.max(0, (vCount - 1) * (hCount - 1));
     let pieces = 0;
     const gridOn = state.useRedLines && state.useBlueLines;
 
     if (state.useGreenBoxes) {
-        pieces = bCount;
+        pieces = Math.max(bCount, gridOn ? gridCount : bCount);
     } else if (gridOn) {
-        pieces = Math.max(0, (vCount - 1) * (hCount - 1));
+        pieces = gridCount;
     }
 
     const hint = document.getElementById('totalPiecesHint');
     if (state.useGreenBoxes && gridOn) {
-        hint.textContent = '（绿框，网格被包含则丢弃）';
+        hint.textContent = '（≥max(绿框,网格)）';
     } else if (state.useGreenBoxes) {
         hint.textContent = '（绿框）';
     } else if (gridOn) {

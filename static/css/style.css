@@ -20,29 +20,24 @@ body {
 .header {
     display: flex;
     align-items: center;
-    padding: 10px 20px;
+    padding: 5px 20px;
     background-color: #fff;
-    gap: 15px;
+    gap: 12px;
     flex-shrink: 0;
     border-bottom: 1px solid #e0e0e0;
+    height: 35px;
 }
 
-.header-icon {
-    height: 50px;
-    width: auto;
-}
-
-.header-title {
-    height: 50px;
-    width: auto;
-    object-fit: contain;
+.header-text {
+    font-size: 18px;
+    color: #333;
+    font-weight: 600;
 }
 
 .header-subtitle {
-    font-size: 23px;
-    color: #333;
+    font-size: 14px;
+    color: #666;
     font-weight: 500;
-    margin-left: 10px;
 }
 
 .main-wrapper {

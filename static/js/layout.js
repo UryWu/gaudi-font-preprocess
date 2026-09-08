@@ -1168,13 +1168,12 @@ function openGreenBoxModal() {
 
     // 初始化位置和大小（仅首次，之后保持用户调整的位置）
     if (!dialog.dataset.initialized) {
-        const wsRect = document.querySelector('.workspace').getBoundingClientRect();
         const w = 560;
-        // 原 650 减去 15%（=97.5，取整 98），新高度约 552
-        const h = Math.round(650 - 650 * 0.15);
-        // 定位到图片预处理区域的右边
-        dialog.style.left = (wsRect.right - w - 20) + 'px';
-        dialog.style.top = (wsRect.top + 60) + 'px';
+        const h = 533;  // 原 650 - 15% - 20px
+        const headerH = document.querySelector('.header').getBoundingClientRect().height;
+        // 右边距离屏幕右边 20px，顶部距离 header 底边紧贴
+        dialog.style.left = (window.innerWidth - w - 20) + 'px';
+        dialog.style.top = headerH + 'px';
         dialog.style.width = w + 'px';
         dialog.style.height = h + 'px';
         dialog.dataset.initialized = '1';

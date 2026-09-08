@@ -5,6 +5,7 @@
 {% block header_actions %}
 <div class="header-actions">
     <button id="panForceToggle" class="btn btn-primary" title="强制平移模式（忽略切割线/绿框）">强制平移模式</button>
+    <button id="mergeBoxesBtn" class="btn btn-primary" disabled title="在图片上拖一个矩形，框住的所有绿框会合并为一个">合并绿色框</button>
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <button id="uploadBtn" class="btn btn-primary">上传图片</button>
     <button id="detectBtn" class="btn-detect" disabled title="对当前旋转重新检测文本框和切割线">开始识别</button>

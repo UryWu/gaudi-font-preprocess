@@ -29,6 +29,9 @@ const state = {
     hoveredBox: null,      // 当前悬停的绿框 {index, box} 或 null
     draggingBox: null,     // 正在拖动的绿框 {index, offsetX, offsetY}
     resizingBox: null,     // 正在调整大小的绿框 {index, dir, startBox, startMouseImg}
+    mergeMode: false,      // 「合并绿框」工具是否激活
+    merging: false,        // 正在拖橡皮框（合并工具的中间态）
+    mergeRect: null,       // 拖拽中的橡皮框 {x1,y1,x2,y2}（图片坐标）
 };
 
 // DOM 元素
@@ -105,6 +108,18 @@ function setupEventListeners() {
     if (panForceBtn && panForceBtn.tagName === 'BUTTON') {
         panForceBtn.addEventListener('click', () => {
             panForceBtn.classList.toggle('active');
+        });
+    }
+
+    // 合并绿色框工具
+    const mergeBtn = document.getElementById('mergeBoxesBtn');
+    if (mergeBtn) {
+        mergeBtn.addEventListener('click', () => {
+            if (state.mergeMode) {
+                exitMergeMode();
+            } else {
+                enterMergeMode();
+            }
         });
     }
 }
@@ -425,6 +440,21 @@ function handleMouseDown(e) {
     // 左键处理
     if (e.button !== 0) return;
 
+    // 「合并绿框」工具：激活时（且未开启强制平移），左键开始画橡皮框
+    const panForceElForMerge = document.getElementById('panForceToggle');
+    const isPanForceForMerge = panForceElForMerge && (
+        (panForceElForMerge.tagName === 'BUTTON' && panForceElForMerge.classList.contains('active')) ||
+        (panForceElForMerge.tagName === 'INPUT' && panForceElForMerge.checked)
+    );
+    if (state.mergeMode && !isPanForceForMerge) {
+        const startImg = canvasToImage(pos);
+        state.merging = true;
+        state.mergeRect = { x1: startImg.x, y1: startImg.y, x2: startImg.x, y2: startImg.y };
+        canvas.style.cursor = 'crosshair';
+        e.preventDefault();
+        return;
+    }
+
     // 「强制平移」按钮：激活时所有左键都视为平移
     const panForceEl = document.getElementById('panForceToggle');
     const isPanForce = panForceEl && (
@@ -512,6 +542,16 @@ function handleMouseMove(e) {
     if (!state.imageObj) return;
 
     const pos = getCanvasPosition(e);
+
+    // 合并工具：实时更新橡皮框
+    if (state.merging && state.mergeRect) {
+        const img = canvasToImage(pos);
+        state.mergeRect.x2 = img.x;
+        state.mergeRect.y2 = img.y;
+        drawCanvas();
+        drawMergeRect();
+        return;
+    }
 
     if (state.isPanning && state.lastMousePos) {
         // 平移
@@ -647,6 +687,14 @@ function setHoveredBox(hb) {
 }
 
 function handleMouseUp(e) {
+    // 合并工具：松手即执行合并（一次性工具）
+    if (state.merging) {
+        performMerge();
+        state.merging = false;
+        state.mergeRect = null;
+        exitMergeMode();
+        return;
+    }
     // 拖动绿框结束：标记检测过期
     if (state.draggingBox) {
         markBoxModified();
@@ -1032,6 +1080,12 @@ function updateUI() {
     document.getElementById('vLineCount').textContent = vCount;
     document.getElementById('hLineCount').textContent = hCount;
     document.getElementById('boxCount').textContent = bCount;
+
+    // 合并绿框按钮：没有绿框时禁用
+    const mergeBtn = document.getElementById('mergeBoxesBtn');
+    if (mergeBtn) {
+        mergeBtn.disabled = bCount === 0;
+    }
 
     // 根据三色勾选状态计算预计切割
     // 三勾选或单绿框：实际去重后 ≥ max(boxes, grid)，取上界
@@ -1919,4 +1973,113 @@ function applyEditBox() {
     updateUI();
     document.getElementById('editBoxModal').style.display = 'none';
     showToast('已应用编辑');
+}
+
+// ============== 合并绿框工具 ==============
+
+// 进入合并模式
+function enterMergeMode() {
+    state.mergeMode = true;
+    const btn = document.getElementById('mergeBoxesBtn');
+    if (btn) btn.classList.add('active');
+    canvas.style.cursor = 'crosshair';
+    showToast('合并模式：在图片上拖一个矩形框选绿框');
+}
+
+// 退出合并模式
+function exitMergeMode() {
+    state.mergeMode = false;
+    state.merging = false;
+    state.mergeRect = null;
+    const btn = document.getElementById('mergeBoxesBtn');
+    if (btn) btn.classList.remove('active');
+    if (state.imageObj) canvas.style.cursor = 'grab';
+    drawCanvas();
+}
+
+// 在已绘制的 canvas 上叠加一个橡皮框（图片坐标 → 屏幕坐标）
+function drawMergeRect() {
+    if (!state.mergeRect) return;
+    const r = state.mergeRect;
+    const { x: offsetX, y: offsetY } = state.drawOffset || getDrawParams();
+    const scale = state.drawScale || state.originalScale * state.zoomLevel;
+
+    const x1 = offsetX + r.x1 * scale;
+    const y1 = offsetY + r.y1 * scale;
+    const x2 = offsetX + r.x2 * scale;
+    const y2 = offsetY + r.y2 * scale;
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(243, 156, 18, 0.15)';   // 橙色半透明填充
+    ctx.strokeStyle = '#f39c12';                  // 橙色实线
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+}
+
+// 执行合并：把橡皮框内的绿框替换为合并后的一个大框
+function performMerge() {
+    const r = state.mergeRect;
+    if (!r) return;
+
+    // 归一化矩形（保证 x1<x2, y1<y2），并按图片坐标比较
+    const rxMin = Math.min(r.x1, r.x2);
+    const rxMax = Math.max(r.x1, r.x2);
+    const ryMin = Math.min(r.y1, r.y2);
+    const ryMax = Math.max(r.y1, r.y2);
+
+    // 最小尺寸阈值：避免误点击
+    const MIN_MERGE_SIZE = 10;
+    if (rxMax - rxMin < MIN_MERGE_SIZE || ryMax - ryMin < MIN_MERGE_SIZE) {
+        showToast('框选区域过小，已取消合并');
+        return;
+    }
+
+    // 找出所有中心点落在橡皮框内的绿框
+    const inside = [];
+    state.boxes.forEach((box, idx) => {
+        const cx = (box.x_min + box.x_max) / 2;
+        const cy = (box.y_min + box.y_max) / 2;
+        if (cx >= rxMin && cx <= rxMax && cy >= ryMin && cy <= ryMax) {
+            inside.push({ idx, box });
+        }
+    });
+
+    if (inside.length === 0) {
+        showToast('框内没有绿框');
+        return;
+    }
+
+    // 合并后的框 = 所有被选中框的最小包围盒
+    let mXmin = Infinity, mYmin = Infinity, mXmax = -Infinity, mYmax = -Infinity;
+    for (const { box } of inside) {
+        if (box.x_min < mXmin) mXmin = box.x_min;
+        if (box.y_min < mYmin) mYmin = box.y_min;
+        if (box.x_max > mXmax) mXmax = box.x_max;
+        if (box.y_max > mYmax) mYmax = box.y_max;
+    }
+    const mergedBox = {
+        x_min: mXmin,
+        y_min: mYmin,
+        x_max: mXmax,
+        y_max: mYmax,
+    };
+    syncBoxDerived(mergedBox);
+    clampBoxToImage(mergedBox);
+
+    // 删掉旧框（按索引从大到小删，避免 splice 影响），加入新框
+    const indicesToRemove = new Set(inside.map(o => o.idx));
+    state.boxes = state.boxes.filter((_, i) => !indicesToRemove.has(i));
+    state.boxes.push(mergedBox);
+
+    markBoxModified();
+    drawCanvas();
+    updateUI();
+    showToast(`已合并 ${inside.length} 个绿框`);
 }

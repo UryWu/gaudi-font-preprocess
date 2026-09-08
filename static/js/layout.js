@@ -1276,11 +1276,11 @@ function applyGreenBoxFilter() {
     showToast(`已过滤：保留 ${filtered.length} / ${originalBoxes.length} 个绿框`);
 }
 
-function resetGreenBoxFilter() {
-    state.boxes = originalBoxes.slice();
+async function resetGreenBoxFilter() {
+    // 重置 = 重新识别（和开始识别按钮同样的功能）
+    await handleDetect();
+    // 重新识别后：更新 originalBoxes 和滑块范围
+    originalBoxes = state.boxes.slice();
     autoAdjustRanges();
     updateFilterStats();
-    drawCanvas();
-    updateUI();
-    showToast('已重置为过滤前');
 }

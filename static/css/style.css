@@ -943,16 +943,10 @@ body {
 /* 单个绿框编辑模态 */
 .edit-box-dialog {
     position: fixed;
-    top: 120px;
-    left: 50%;
-    transform: translateX(-50%);
     width: 320px;
     min-width: 320px;
     min-height: 0;
     z-index: 2100;
-}
-.edit-box-dialog .modal-header {
-    cursor: default;
 }
 .edit-box-info {
     font-size: 12px;

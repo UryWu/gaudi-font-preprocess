@@ -6,6 +6,8 @@
 <div class="header-actions">
     <button id="panForceToggle" class="btn btn-primary" title="强制平移模式（忽略切割线/绿框）">强制平移模式</button>
     <button id="mergeBoxesBtn" class="btn btn-primary" disabled title="在图片上拖一个矩形，框住的所有绿框会合并为一个">合并绿色框</button>
+    <button id="undoBtn" class="btn btn-secondary" disabled title="撤销上一步 (Ctrl+Z)">↶ 撤回</button>
+    <button id="redoBtn" class="btn btn-secondary" disabled title="重做 (Ctrl+Y)">↷ 重做</button>
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <button id="uploadBtn" class="btn btn-primary">上传图片</button>
     <button id="detectBtn" class="btn-detect" disabled title="对当前旋转重新检测文本框和切割线">开始识别</button>
@@ -205,9 +207,17 @@
     </div>
 </div>
 
-<!-- 单个绿框编辑模态 -->
+<!-- 单个绿框编辑模态（可拖动 + 可调整大小） -->
 <div class="modal-mask" id="editBoxModal" style="display: none;">
-    <div class="modal-dialog edit-box-dialog" id="editBoxDialog">
+    <div class="modal-dialog edit-box-dialog" id="editBoxDialog" style="top: 90px; right: 30px;">
+        <div class="resize-handle n"></div>
+        <div class="resize-handle s"></div>
+        <div class="resize-handle w"></div>
+        <div class="resize-handle e"></div>
+        <div class="resize-handle nw"></div>
+        <div class="resize-handle ne"></div>
+        <div class="resize-handle sw"></div>
+        <div class="resize-handle se"></div>
         <div class="modal-header" id="editBoxHeader">
             <h3>编辑绿框 <span id="editBoxInfo" class="edit-box-info"></span></h3>
             <button class="modal-close" data-close="edit-modal-close" title="关闭">×</button>

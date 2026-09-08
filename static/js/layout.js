@@ -32,6 +32,8 @@ const state = {
     mergeMode: false,      // 「合并绿框」工具是否激活
     merging: false,        // 正在拖橡皮框（合并工具的中间态）
     mergeRect: null,       // 拖拽中的橡皮框 {x1,y1,x2,y2}（图片坐标）
+    history: [],           // 撤销栈：每项为当前 state 的快照（修改前）
+    historyRedo: [],       // 重做栈：撤销后保存的状态
 };
 
 // DOM 元素
@@ -50,12 +52,95 @@ const rotationDisplay = document.getElementById('rotationDisplay');
 const useRedLinesToggle = document.getElementById('useRedLinesToggle');
 const useBlueLinesToggle = document.getElementById('useBlueLinesToggle');
 const useGreenBoxesToggle = document.getElementById('useGreenBoxesToggle');
+const undoBtn = document.getElementById('undoBtn');
+const redoBtn = document.getElementById('redoBtn');
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     resizeCanvas();
 });
+
+// ============== 撤销 / 重做 ==============
+const HISTORY_LIMIT = 50;
+
+// 序列化当前 state 中可撤销的字段（深拷贝，避免快照被后续修改污染）
+function snapshotState() {
+    return {
+        boxes: JSON.parse(JSON.stringify(state.boxes || [])),
+        verticalLines: JSON.parse(JSON.stringify(state.verticalLines || [])),
+        horizontalLines: JSON.parse(JSON.stringify(state.horizontalLines || [])),
+        stripHorizontalLines: JSON.parse(JSON.stringify(state.stripHorizontalLines || [])),
+        cumulativeRotation: state.cumulativeRotation,
+        detectionStale: state.detectionStale,
+    };
+}
+
+// 从快照恢复 state（深拷贝）
+function restoreSnapshot(snap) {
+    state.boxes = JSON.parse(JSON.stringify(snap.boxes || []));
+    state.verticalLines = JSON.parse(JSON.stringify(snap.verticalLines || []));
+    state.horizontalLines = JSON.parse(JSON.stringify(snap.horizontalLines || []));
+    state.stripHorizontalLines = JSON.parse(JSON.stringify(snap.stripHorizontalLines || []));
+    state.cumulativeRotation = snap.cumulativeRotation || 0;
+    state.detectionStale = !!snap.detectionStale;
+}
+
+// 任何「修改前」调用：把当前状态压入撤销栈，并清空重做栈
+function pushHistory() {
+    state.history.push(snapshotState());
+    if (state.history.length > HISTORY_LIMIT) {
+        state.history.shift();
+    }
+    state.historyRedo = [];
+    updateUndoRedoButtons();
+}
+
+function undo() {
+    if (state.history.length === 0) return;
+    // 把当前状态保存到重做栈
+    state.historyRedo.push(snapshotState());
+    if (state.historyRedo.length > HISTORY_LIMIT) {
+        state.historyRedo.shift();
+    }
+    // 恢复上一步
+    const snap = state.history.pop();
+    restoreSnapshot(snap);
+    refreshAfterHistoryChange();
+    showToast('已撤销');
+}
+
+function redo() {
+    if (state.historyRedo.length === 0) return;
+    // 把当前状态保存到撤销栈
+    state.history.push(snapshotState());
+    if (state.history.length > HISTORY_LIMIT) {
+        state.history.shift();
+    }
+    // 恢复重做步
+    const snap = state.historyRedo.pop();
+    restoreSnapshot(snap);
+    refreshAfterHistoryChange();
+    showToast('已重做');
+}
+
+// 撤销 / 重做后：刷新 UI 状态（检测过期按钮、旋转显示、画布）
+function refreshAfterHistoryChange() {
+    if (state.detectionStale) {
+        detectBtn.classList.add('btn-detect-stale');
+    } else {
+        detectBtn.classList.remove('btn-detect-stale');
+    }
+    updateRotationDisplay();
+    drawCanvas();
+    updateUI();
+    updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons() {
+    if (undoBtn) undoBtn.disabled = state.history.length === 0;
+    if (redoBtn) redoBtn.disabled = state.historyRedo.length === 0;
+}
 
 function setupEventListeners() {
     uploadBtn.addEventListener('click', () => imageInput.click());
@@ -1903,7 +1988,11 @@ let editingBoxIndex = -1;
 
 function initEditBoxModal() {
     const modal = document.getElementById('editBoxModal');
+    const dialog = document.getElementById('editBoxDialog');
+    const header = document.getElementById('editBoxHeader');
     if (!modal) return;
+    if (!dialog || !header) return;
+
     // 关闭按钮
     modal.querySelectorAll('[data-close="edit-modal-close"]').forEach(btn => {
         btn.addEventListener('click', () => { modal.style.display = 'none'; });
@@ -1911,6 +2000,14 @@ function initEditBoxModal() {
     // 确定按钮
     const okBtn = document.getElementById('editBoxOkBtn');
     if (okBtn) okBtn.addEventListener('click', applyEditBox);
+
+    // 拖动：从 header 拖动整个 dialog
+    initModalDrag(dialog, header);
+
+    // 8 个方向的 resize 手柄
+    modal.querySelectorAll('.resize-handle').forEach(handle => {
+        initModalResize(dialog, handle, handle.classList[1]);
+    });
 }
 
 function openEditBoxModal(index) {

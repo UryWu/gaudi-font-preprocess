@@ -32,6 +32,9 @@ const state = {
     mergeMode: false,      // 「合并绿框」工具是否激活
     merging: false,        // 正在拖橡皮框（合并工具的中间态）
     mergeRect: null,       // 拖拽中的橡皮框 {x1,y1,x2,y2}（图片坐标）
+    markMode: false,       // 「标记绿框」工具是否激活
+    marking: false,        // 正在拖橡皮框（标记工具的中间态）
+    markRect: null,        // 拖拽中的橡皮框 {x1,y1,x2,y2}（图片坐标）
     selecting: false,      // 正在拖框选橡皮框（Alt+左键拖动）
     selectionRect: null,   // 框选橡皮框 {x1,y1,x2,y2}（图片坐标）
     selectedItems: {       // 当前选中项（与合并模式互斥）
@@ -211,6 +214,18 @@ function setupEventListeners() {
                 exitMergeMode();
             } else {
                 enterMergeMode();
+            }
+        });
+    }
+
+    // 标记绿色框工具（Shift+左键拖动是主要入口，button 为可选入口）
+    const markBtn = document.getElementById('markBoxesBtn');
+    if (markBtn) {
+        markBtn.addEventListener('click', () => {
+            if (state.markMode) {
+                exitMarkMode();
+            } else {
+                enterMarkMode();
             }
         });
     }
@@ -574,6 +589,19 @@ function handleMouseDown(e) {
         return;
     }
 
+    // 「标记绿框」工具：Shift + 左键拖动（无 Ctrl/Alt）→ 画橡皮框，松手即添加一个绿框
+    // 排除 Ctrl+Alt（合并优先）和强制平移模式
+    const isMarkShortcut = e.shiftKey && !e.ctrlKey && !e.altKey;
+    if (isMarkShortcut && !isPanForceForMerge) {
+        pushHistory();  // 标注操作前回退点
+        const startImg = canvasToImage(pos);
+        state.marking = true;
+        state.markRect = { x1: startImg.x, y1: startImg.y, x2: startImg.x, y2: startImg.y };
+        canvas.style.cursor = 'crosshair';
+        e.preventDefault();
+        return;
+    }
+
     // 「框选」工具：Alt + 左键拖动（无 Ctrl）→ 画橡皮框选
     // 仅当起点不在绿框/切割线/手柄上时触发，避免与 Alt+点击删除冲突
     if (e.altKey && !e.ctrlKey) {
@@ -698,6 +726,16 @@ function handleMouseMove(e) {
         state.mergeRect.y2 = img.y;
         drawCanvas();
         drawMergeRect();
+        return;
+    }
+
+    // 标记工具：实时更新橡皮框
+    if (state.marking && state.markRect) {
+        const img = canvasToImage(pos);
+        state.markRect.x2 = img.x;
+        state.markRect.y2 = img.y;
+        drawCanvas();
+        drawMarkRect();
         return;
     }
 
@@ -859,6 +897,15 @@ function setHoveredBox(hb) {
 }
 
 function handleMouseUp(e) {
+    // 标记工具：松手即添加绿框（一次性工具）
+    if (state.marking) {
+        performMark();
+        state.marking = false;
+        state.markRect = null;
+        canvas.style.cursor = state.markMode ? 'crosshair' : 'grab';
+        return;
+    }
+
     // 合并工具：松手即执行合并（一次性工具）
     if (state.merging) {
         performMerge();
@@ -1284,6 +1331,12 @@ function updateUI() {
     const mergeBtn = document.getElementById('mergeBoxesBtn');
     if (mergeBtn) {
         mergeBtn.disabled = bCount === 0;
+    }
+
+    // 标记绿框按钮：未上传图片时禁用
+    const markBtn = document.getElementById('markBoxesBtn');
+    if (markBtn) {
+        markBtn.disabled = !state.imageObj;
     }
 
     // 根据三色勾选状态计算预计切割
@@ -2300,6 +2353,98 @@ function performMerge() {
     drawCanvas();
     updateUI();
     showToast(`已合并 ${inside.length} 个绿框`);
+}
+
+// ============== 标记绿框工具 ==============
+
+// 进入标记模式
+function enterMarkMode() {
+    state.markMode = true;
+    const btn = document.getElementById('markBoxesBtn');
+    if (btn) btn.classList.add('active');
+    canvas.style.cursor = 'crosshair';
+    showToast('标记模式：Shift + 左键拖动框选区域添加绿框');
+}
+
+// 退出标记模式
+function exitMarkMode() {
+    state.markMode = false;
+    state.marking = false;
+    state.markRect = null;
+    const btn = document.getElementById('markBoxesBtn');
+    if (btn) btn.classList.remove('active');
+    if (state.imageObj) canvas.style.cursor = 'grab';
+    drawCanvas();
+}
+
+// 在已绘制的 canvas 上叠加一个橡皮框（图片坐标 → 屏幕坐标）
+function drawMarkRect() {
+    if (!state.markRect) return;
+    const r = state.markRect;
+    const { x: offsetX, y: offsetY } = state.drawOffset || getDrawParams();
+    const scale = state.drawScale || state.originalScale * state.zoomLevel;
+
+    const x1 = offsetX + r.x1 * scale;
+    const y1 = offsetY + r.y1 * scale;
+    const x2 = offsetX + r.x2 * scale;
+    const y2 = offsetY + r.y2 * scale;
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(46, 204, 113, 0.15)';   // 绿色半透明填充（与绿框色一致）
+    ctx.strokeStyle = '#2ecc71';                  // 绿色实线
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+}
+
+// 执行标记：在橡皮框位置添加一个绿框
+function performMark() {
+    const r = state.markRect;
+    if (!r) return;
+
+    // 归一化矩形（保证 x1<x2, y1<y2），按图片坐标比较
+    const rxMin = Math.min(r.x1, r.x2);
+    const rxMax = Math.max(r.x1, r.x2);
+    const ryMin = Math.min(r.y1, r.y2);
+    const ryMax = Math.max(r.y1, r.y2);
+
+    // 最小尺寸阈值：避免误点击
+    const MIN_MARK_SIZE = 10;
+    if (rxMax - rxMin < MIN_MARK_SIZE || ryMax - ryMin < MIN_MARK_SIZE) {
+        showToast('框选区域过小，已取消标注');
+        return;
+    }
+
+    const newBox = {
+        x_min: Math.round(rxMin),
+        y_min: Math.round(ryMin),
+        x_max: Math.round(rxMax),
+        y_max: Math.round(ryMax),
+    };
+    syncBoxDerived(newBox);
+    clampBoxToImage(newBox);
+
+    pushHistory();  // 标注绿框前回退点
+    state.boxes.push(newBox);
+    // 同步主集：masterBoxes 是过滤前全集；新增即追加并持久化
+    if (masterBoxes && masterBoxes.length > 0) {
+        masterBoxes.push({ ...newBox });
+        persistMasterBoxes();
+    } else {
+        masterBoxes = [...state.boxes];
+        persistMasterBoxes();
+    }
+
+    markBoxModified();
+    drawCanvas();
+    updateUI();
+    showToast('已标注 1 个绿框');
 }
 
 // ============== 框选工具（Alt+左键拖动） ==============

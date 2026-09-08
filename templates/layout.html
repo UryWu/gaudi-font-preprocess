@@ -5,6 +5,7 @@
 {% block header_actions %}
 <div class="header-actions">
     <button id="panForceToggle" class="btn btn-primary" title="强制平移模式（忽略切割线/绿框）">强制平移模式</button>
+    <button id="markBoxesBtn" class="btn btn-primary" disabled title="Shift+左键拖动框选区域，区域内自动标注绿色框（无需点按钮）">标记绿色框</button>
     <button id="mergeBoxesBtn" class="btn btn-primary" disabled title="在图片上拖一个矩形，框住的所有绿框会合并为一个">合并绿色框</button>
     <button id="undoBtn" class="btn btn-secondary" disabled title="撤销上一步 (Ctrl+Z)">↶ 撤回</button>
     <button id="redoBtn" class="btn btn-secondary" disabled title="重做 (Ctrl+Y)">↷ 重做</button>
@@ -28,6 +29,7 @@
     <div class="panel">
         <div class="panel-header">
             <h2>图片预处理</h2>
+            <button id="shortcutSettingsBtn" class="btn btn-outline-info" style="padding: 4px 12px; font-size: 12px; width: auto; margin-top: 0; white-space: nowrap;">⚙ 快捷键设置</button>
             <label class="checkbox-label" title="上传时自动校正图片倾斜">
                 <input type="checkbox" id="deskewToggle" checked>
                 <span>启用纠偏</span>
@@ -49,6 +51,7 @@
                 <p><strong>移动绿框：</strong>左键拖动绿框；绿框上显示 8 个调整手柄可缩放</p>
                 <p><strong>编辑绿框：</strong>双击绿框打开编辑器（修改 x/y/宽/高）</p>
                 <p><strong>删除绿框：</strong>Alt + 左键点击绿框</p>
+                <p><strong>标记绿框：</strong>Shift + 左键拖动框选区域，自动添加一个绿框</p>
                 <p><strong>合并绿框：</strong>Ctrl+Alt + 左键拖动（无需点按钮，松手即合并）；也可点标题栏「合并绿色框」按钮后再拖动</p>
                 <p><strong>框选删除：</strong>Alt + 左键拖动框选蓝线/红线/绿框（按 Delete 键删除选中的）</p>
                 <p><strong>纠偏：</strong>上传时自动校正倾斜，检测到的角度会以 toast 提示（标题栏可关闭）</p>
@@ -249,9 +252,48 @@
     </div>
 </div>
 
+<!-- 快捷键设置模态框（可拖动 + 可调整大小） -->
+<div class="modal-mask" id="shortcutModal" style="display: none;">
+    <div class="modal-dialog" id="shortcutDialog" style="width: 520px; height: 580px;">
+        <div class="resize-handle n"></div>
+        <div class="resize-handle s"></div>
+        <div class="resize-handle w"></div>
+        <div class="resize-handle e"></div>
+        <div class="resize-handle nw"></div>
+        <div class="resize-handle ne"></div>
+        <div class="resize-handle sw"></div>
+        <div class="resize-handle se"></div>
+        <div class="modal-header" id="shortcutHeader">
+            <h3>快捷键设置</h3>
+            <button class="modal-close" data-close="shortcut-close" title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #ddd;">
+                        <th style="text-align: left; padding: 8px 4px;">操作</th>
+                        <th style="text-align: left; padding: 8px 4px;">快捷键</th>
+                    </tr>
+                </thead>
+                <tbody id="shortcutTable">
+                    <!-- Populated by JS -->
+                </tbody>
+            </table>
+            <div style="margin-top: 12px; padding: 8px; background: #f0f7fa; border-radius: 4px; font-size: 12px; color: #555;">
+                💡 点击「录制」按钮后，按下想要设置的按键即可
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" data-close="shortcut-close">取消</button>
+            <button class="btn btn-secondary" id="shortcutResetBtn">恢复默认</button>
+            <button class="btn btn-primary" id="shortcutSaveBtn">保存</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=20"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=21"></script>
 {% endblock %}

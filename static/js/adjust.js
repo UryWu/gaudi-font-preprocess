@@ -104,6 +104,15 @@ function setupEventListeners() {
             updateBrushToggleButton();
         }
     });
+
+    // 滚动位置记忆：debounce 250ms 写入 localStorage
+    let _scrollTimer = null;
+    window.addEventListener('scroll', () => {
+        if (_scrollTimer) clearTimeout(_scrollTimer);
+        _scrollTimer = setTimeout(() => {
+            try { localStorage.setItem('gaudiAdjustScrollY', String(window.scrollY)); } catch (e) {}
+        }, 250);
+    });
 }
 
 // 加载切割结果
@@ -134,6 +143,14 @@ async function loadCutResults() {
         state.characters = data.characters;
         renderCharacterGrid();
         updateUI();
+
+        // 恢复滚动位置（debounced 写入 localStorage）
+        try {
+            const savedY = parseInt(localStorage.getItem('gaudiAdjustScrollY') || '0', 10);
+            if (savedY > 0) {
+                setTimeout(() => window.scrollTo(0, savedY), 0);
+            }
+        } catch (e) {}
 
     } catch (error) {
         console.error('加载切割结果失败:', error);
@@ -510,8 +527,8 @@ function showAdjustModal(displayIndex) {
     if (!modal) {
         modal = createAdjustModal();
         document.body.appendChild(modal);
-        setupBrushControls();
     }
+    setupBrushControls();  // 每次打开都执行：事件一次性绑定（addEventListener 重复注册是安全的）+ 加载持久化配置
 
     // 每次打开都重置画笔/切割状态（防止上一次残留）
     canvasState.brushMode = false;
@@ -1133,6 +1150,37 @@ function setupBrushControls() {
             document.querySelectorAll('.brush-preset').forEach(b => b.classList.remove('active'));
         });
     }
+
+    // 持久化：颜色/大小变化时存到 localStorage，下次打开 modal 自动加载
+    const persist = () => {
+        const c = colorInput ? colorInput.value : '#000000';
+        const s = sizeNumber ? parseInt(sizeNumber.value, 10) || 5 : 5;
+        try { localStorage.setItem('gaudiBrushConfig', JSON.stringify({ color: c, size: s })); } catch (e) {}
+    };
+    const loadSaved = () => {
+        try {
+            const s = JSON.parse(localStorage.getItem('gaudiBrushConfig') || '{}');
+            if (colorInput && s.color) colorInput.value = s.color;
+            if (sizeNumber && s.size) {
+                sizeNumber.value = s.size;
+                if (sizeSlider) sizeSlider.value = s.size;
+            }
+            const c = s.color ? s.color.toLowerCase() : '';
+            document.querySelectorAll('.brush-preset').forEach(b => {
+                b.classList.toggle('active', (b.getAttribute('data-color') || '').toLowerCase() === c);
+            });
+        } catch (e) {}
+    };
+    if (colorInput) {
+        colorInput.addEventListener('input', persist);
+        colorInput.addEventListener('change', persist);
+    }
+    if (sizeNumber) sizeNumber.addEventListener('input', persist);
+    if (sizeSlider) sizeSlider.addEventListener('input', persist);
+    document.querySelectorAll('.brush-preset').forEach(btn => {
+        btn.addEventListener('click', persist);
+    });
+    loadSaved();
 }
 
 // 关闭调整弹窗

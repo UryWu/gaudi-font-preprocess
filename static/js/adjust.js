@@ -133,7 +133,9 @@ function createCharCard(char, displayIndex) {
     const img = document.createElement('img');
     img.className = 'char-image';
     // 兼容老数据：image_url 缺失时根据 hash + filename 构造
-    img.src = char.image_url || `/output/${state.imageHash}/${char.filename}`;
+    // 追加时间戳防止浏览器缓存重剪后的同名 PNG
+    const baseUrl = char.image_url || `/output/${state.imageHash}/${char.filename}`;
+    img.src = `${baseUrl}?t=${Date.now()}`;
     img.alt = `字符 ${displayIndex + 1}`;
 
     // 状态标签
@@ -359,7 +361,7 @@ function createAdjustModal() {
                 <div class="adjust-controls">
                     <h4>操作</h4>
                     <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="resetAdjust()">重置</button>
-                    <button class="btn btn-primary" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用</button>
+                    <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用切割范围</button>
                     <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="confirmAdjust()">确定</button>
                     <button class="btn btn-success" style="width: 100%;" onclick="saveAndNext()">保存并下一个</button>
                 </div>
@@ -394,7 +396,8 @@ function loadCharToCanvas(char) {
         // 设置canvas事件监听
         setupCanvasEvents(canvas);
     };
-    img.src = char.image_url;
+    // 加 cache buster 防止浏览器缓存重剪后的同名 PNG
+    img.src = `${char.image_url}?t=${Date.now()}`;
 }
 
 // 重绘Canvas

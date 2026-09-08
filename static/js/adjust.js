@@ -285,7 +285,13 @@ const canvasState = {
     originalTop: 0,
     originalBottom: 0,
     originalLeft: 0,
-    originalRight: 0
+    originalRight: 0,
+    // 画笔相关
+    brushMode: false,         // 是否处于画笔模式（与拖拽裁剪互斥）
+    isPainting: false,        // 当前是否正在画
+    overlayCanvas: null,      // 离屏 canvas，记录画笔笔触
+    overlayCtx: null,
+    lastBrushPos: null        // 上一个画笔位置（用于画线段）
 };
 
 // 打开调整弹窗
@@ -309,7 +315,14 @@ function showAdjustModal(displayIndex) {
     if (!modal) {
         modal = createAdjustModal();
         document.body.appendChild(modal);
+        setupBrushControls();
     }
+
+    // 每次打开都重置画笔状态（防止上一次绘画残留）
+    canvasState.brushMode = false;
+    canvasState.isPainting = false;
+    canvasState.lastBrushPos = null;
+    updateBrushToggleButton();
 
     // 更新弹窗内容
     document.getElementById('modalCharIndex').textContent = displayIndex + 1;
@@ -359,6 +372,34 @@ function createAdjustModal() {
                     </div>
                 </div>
                 <div class="adjust-controls">
+                    <h4 style="margin-top: 12px; font-size: 13px; color: #555;">画笔</h4>
+                    <button type="button" id="brushToggleBtn" onclick="toggleBrushMode()"
+                        style="width: 100%; margin-bottom: 8px; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px;">
+                        ✏ 画笔模式：关
+                    </button>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <label style="font-size: 12px;">颜色:</label>
+                        <input type="color" id="brushColor" value="#000000" style="width: 50px; height: 28px; border: 1px solid #ccc; border-radius: 4px;">
+                    </div>
+                    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <button type="button" class="brush-preset" data-color="#000000" style="background: #000000; color: #fff;">黑</button>
+                        <button type="button" class="brush-preset" data-color="#ffffff" style="background: #ffffff; color: #000; border: 1px solid #ccc;">白</button>
+                        <button type="button" class="brush-preset" data-color="#ff0000" style="background: #ff0000; color: #fff;">红</button>
+                        <button type="button" class="brush-preset" data-color="#00ff00" style="background: #00ff00; color: #000;">绿</button>
+                        <button type="button" class="brush-preset" data-color="#0000ff" style="background: #0000ff; color: #fff;">蓝</button>
+                        <button type="button" class="brush-preset" data-color="#ffff00" style="background: #ffff00; color: #000;">黄</button>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <label style="font-size: 12px; min-width: 40px;">大小:</label>
+                        <input type="range" id="brushSizeSlider" min="1" max="100" value="5" style="flex: 1;">
+                        <input type="number" id="brushSizeInput" min="1" max="100" value="5" style="width: 60px;">
+                    </div>
+                    <button type="button" onclick="clearBrushOverlay()"
+                        style="width: 100%; padding: 6px; background: #fff5f5; border: 1px solid #e8c5c5; color: #c0392b; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                        清除画笔
+                    </button>
+                </div>
+                <div class="adjust-controls">
                     <h4>操作</h4>
                     <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="resetAdjust()">重置</button>
                     <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用切割范围</button>
@@ -390,6 +431,13 @@ function loadCharToCanvas(char) {
         canvas.width = img.width * canvasState.scale;
         canvas.height = img.height * canvasState.scale;
 
+        // 创建画笔覆盖层 canvas（与主 canvas 同尺寸，用于记录笔触）
+        canvasState.overlayCanvas = document.createElement('canvas');
+        canvasState.overlayCanvas.width = canvas.width;
+        canvasState.overlayCanvas.height = canvas.height;
+        canvasState.overlayCtx = canvasState.overlayCanvas.getContext('2d');
+        canvasState.lastBrushPos = null;
+
         // 绘制图片和边框
         redrawCanvas();
 
@@ -412,7 +460,16 @@ function redrawCanvas() {
     // 清空并重绘图片
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    drawAdjustBox(ctx, canvas.width, canvas.height, char, canvasState.scale);
+
+    // 画笔模式下不显示裁剪线（避免遮挡），让用户清晰看到画笔内容
+    if (!canvasState.brushMode) {
+        drawAdjustBox(ctx, canvas.width, canvas.height, char, canvasState.scale);
+    }
+
+    // 把画笔覆盖层画在主 canvas 上方（仅在画笔模式下可见）
+    if (canvasState.brushMode && canvasState.overlayCanvas) {
+        ctx.drawImage(canvasState.overlayCanvas, 0, 0);
+    }
 }
 
 // 绘制调整框（始终显示）
@@ -563,6 +620,13 @@ function getEdgeAtPosition(x, y) {
 function handleMouseDown(e) {
     const { x, y } = getCanvasCoords(e);
 
+    // 画笔模式下：直接进入绘画状态，不响应裁剪边
+    if (canvasState.brushMode) {
+        canvasState.isPainting = true;
+        paintAt(x, y);
+        return;
+    }
+
     const edge = getEdgeAtPosition(x, y);
     if (edge) {
         canvasState.isDragging = true;
@@ -580,6 +644,12 @@ function handleMouseDown(e) {
 function handleMouseMove(e) {
     const { x, y, rect } = getCanvasCoords(e);
     const canvas = e.target;
+
+    // 画笔模式优先
+    if (canvasState.isPainting && canvasState.brushMode) {
+        paintAt(x, y);
+        return;
+    }
 
     if (canvasState.isDragging) {
         const dx = x - canvasState.startX;
@@ -609,7 +679,11 @@ function handleMouseMove(e) {
         // 重绘canvas
         redrawCanvas();
     } else {
-        // 更新光标样式
+        // 更新光标样式（仅在裁剪模式下有意义）
+        if (canvasState.brushMode) {
+            canvas.style.cursor = 'crosshair';
+            return;
+        }
         const edge = getEdgeAtPosition(x, y);
         if (edge === 'top' || edge === 'bottom') {
             canvas.style.cursor = 'ns-resize';
@@ -623,8 +697,160 @@ function handleMouseMove(e) {
 
 // 鼠标释放
 function handleMouseUp(e) {
+    if (canvasState.isPainting) {
+        canvasState.isPainting = false;
+        canvasState.lastBrushPos = null;
+        return;
+    }
     canvasState.isDragging = false;
     canvasState.dragEdge = null;
+}
+
+// 在画笔覆盖层上画一个点（自动补点连线，避免快速移动时出现间断）
+function paintAt(x, y) {
+    const overlayCtx = canvasState.overlayCtx;
+    if (!overlayCtx) return;
+
+    const colorInput = document.getElementById('brushColor');
+    const sizeInput = document.getElementById('brushSizeInput');
+    const color = colorInput ? colorInput.value : '#000000';
+    const size = sizeInput ? Math.max(1, parseInt(sizeInput.value) || 5) : 5;
+
+    overlayCtx.fillStyle = color;
+    overlayCtx.beginPath();
+
+    if (canvasState.lastBrushPos) {
+        // 在上一个点和当前点之间补点画小圆，避免快速移动出现断点
+        const dx = x - canvasState.lastBrushPos.x;
+        const dy = y - canvasState.lastBrushPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const step = Math.max(1, size / 2);
+        const steps = Math.max(1, Math.ceil(dist / step));
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const px = canvasState.lastBrushPos.x + dx * t;
+            const py = canvasState.lastBrushPos.y + dy * t;
+            overlayCtx.moveTo(px, py);
+            overlayCtx.arc(px, py, size / 2, 0, Math.PI * 2);
+        }
+    } else {
+        overlayCtx.moveTo(x, y);
+        overlayCtx.arc(x, y, size / 2, 0, Math.PI * 2);
+    }
+    overlayCtx.fill();
+
+    canvasState.lastBrushPos = { x, y };
+    redrawCanvas();
+}
+
+// 切换画笔模式（开关）
+function toggleBrushMode() {
+    canvasState.brushMode = !canvasState.brushMode;
+    canvasState.isPainting = false;
+    canvasState.lastBrushPos = null;
+    updateBrushToggleButton();
+    redrawCanvas();
+}
+
+// 根据当前 brushMode 刷新按钮显示
+function updateBrushToggleButton() {
+    const btn = document.getElementById('brushToggleBtn');
+    if (!btn) return;
+    if (canvasState.brushMode) {
+        btn.textContent = '✏ 画笔模式：开';
+        btn.style.background = '#4a90a4';
+        btn.style.color = '#fff';
+        btn.style.borderColor = '#4a90a4';
+    } else {
+        btn.textContent = '✏ 画笔模式：关';
+        btn.style.background = '#f0f0f0';
+        btn.style.color = '';
+        btn.style.borderColor = '#ccc';
+    }
+}
+
+// 检测覆盖层是否真有非透明像素（用户是否真的画过）
+function hasPaintStrokes() {
+    if (!canvasState.overlayCtx || !canvasState.overlayCanvas) return false;
+    const w = canvasState.overlayCanvas.width;
+    const h = canvasState.overlayCanvas.height;
+    if (w === 0 || h === 0) return false;
+    try {
+        const data = canvasState.overlayCtx.getImageData(0, 0, w, h).data;
+        for (let i = 3; i < data.length; i += 4) {
+            if (data[i] > 0) return true;
+        }
+    } catch (e) {
+        // getImageData 在画布被污染时会抛错；这种情况当作有笔触处理，让服务器端兜底
+        return true;
+    }
+    return false;
+}
+
+// 把画笔覆盖层烘焙到主 canvas 上，并清空覆盖层
+function bakeOverlayToImage() {
+    const canvas = document.getElementById('adjustCanvas');
+    if (!canvas || !canvasState.overlayCanvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(canvasState.overlayCanvas, 0, 0);
+    canvasState.overlayCtx.clearRect(
+        0, 0,
+        canvasState.overlayCanvas.width,
+        canvasState.overlayCanvas.height
+    );
+}
+
+// 清除画笔覆盖层
+function clearBrushOverlay() {
+    if (!canvasState.overlayCtx) return;
+    canvasState.overlayCtx.clearRect(
+        0, 0,
+        canvasState.overlayCanvas.width,
+        canvasState.overlayCanvas.height
+    );
+    redrawCanvas();
+}
+
+// 绑定画笔相关控件（颜色预设 / 大小滑杆 ↔ 数字输入）
+function setupBrushControls() {
+    const colorInput = document.getElementById('brushColor');
+    const sizeSlider = document.getElementById('brushSizeSlider');
+    const sizeNumber = document.getElementById('brushSizeInput');
+
+    // 颜色预设按钮
+    document.querySelectorAll('.brush-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const c = btn.getAttribute('data-color');
+            if (!c) return;
+            if (colorInput) colorInput.value = c;
+            document.querySelectorAll('.brush-preset').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+    });
+
+    // 默认高亮黑色预设
+    const defaultPreset = document.querySelector('.brush-preset[data-color="#000000"]');
+    if (defaultPreset) defaultPreset.classList.add('active');
+
+    // 滑杆 ↔ 数字输入 双向同步
+    if (sizeSlider && sizeNumber) {
+        sizeSlider.addEventListener('input', () => {
+            sizeNumber.value = sizeSlider.value;
+        });
+        sizeNumber.addEventListener('input', () => {
+            let v = parseInt(sizeNumber.value);
+            if (isNaN(v)) v = 1;
+            v = Math.max(1, Math.min(100, v));
+            sizeSlider.value = v;
+        });
+    }
+
+    // 自定义颜色时取消预设高亮
+    if (colorInput) {
+        colorInput.addEventListener('input', () => {
+            document.querySelectorAll('.brush-preset').forEach(b => b.classList.remove('active'));
+        });
+    }
 }
 
 // 关闭调整弹窗
@@ -685,7 +911,24 @@ async function confirmAdjust() {
     canvasState.char.adjust_right = parseInt(document.getElementById('adjustRight').value) || 0;
     canvasState.char.needs_adjust = false;
 
-    // 重新加载 canvas
+    // 把画笔覆盖层烘焙到主 canvas，并把整张画好的图作为 image_data 发到服务器
+    // 只有真正画过任何像素才发送，避免无谓地增大 payload
+    if (hasPaintStrokes()) {
+        bakeOverlayToImage();
+        const canvas = document.getElementById('adjustCanvas');
+        try {
+            canvasState.char.image_data = canvas.toDataURL('image/png');
+        } catch (e) {
+            console.error('toDataURL 失败:', e);
+            showToast('画笔内容编码失败，仍保存其他调整');
+        }
+    }
+
+    // 烘焙后关闭画笔模式，重绘（不再画覆盖层）
+    canvasState.brushMode = false;
+    canvasState.isPainting = false;
+    canvasState.lastBrushPos = null;
+    updateBrushToggleButton();
     redrawCanvas();
 
     // 触发 session 保存（与页面「保存」按钮走同一个接口）

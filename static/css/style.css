@@ -989,3 +989,18 @@ body {
     border-color: #4a90a4;
 }
 
+/* 画笔预设色按钮 */
+.brush-preset {
+    width: 36px;
+    height: 28px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+.brush-preset.active {
+    outline: 2px solid #4a90a4;
+    outline-offset: 1px;
+}
+

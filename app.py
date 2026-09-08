@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import cv2
+import numpy as np
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from werkzeug.utils import secure_filename
 
@@ -721,7 +722,12 @@ def clear_all_data():
 
 @app.route('/api/save_adjustments', methods=['POST'])
 def save_adjustments():
-    """保存调整结果：实际按 adjust_top/bottom/left/right 重剪图片"""
+    """保存调整结果：实际按 adjust_top/bottom/left/right 重剪图片。
+
+    若客户端传了 `image_data`（来自画笔编辑），则直接把 base64 PNG 写入磁盘，
+    跳过基于原图的重剪逻辑（仍保留后续按 adjust_* 二次裁剪的可能性）。
+    """
+    import base64
     data = request.get_json()
     image_hash = data.get('hash')
     characters = data.get('characters', [])
@@ -737,21 +743,48 @@ def save_adjustments():
     # 按 adjust 值实际重剪 PNG 文件
     output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
     recropped = 0
+    painted = 0
     for char in characters:
-        a_top = int(char.get('adjust_top', 0) or 0)
-        a_bottom = int(char.get('adjust_bottom', 0) or 0)
-        a_left = int(char.get('adjust_left', 0) or 0)
-        a_right = int(char.get('adjust_right', 0) or 0)
-
-        # 全部为 0 则跳过
-        if a_top == 0 and a_bottom == 0 and a_left == 0 and a_right == 0:
-            continue
-
         filename = char.get('filename')
         if not filename:
             continue
         fp = os.path.join(output_dir, filename)
         if not os.path.exists(fp):
+            continue
+
+        # 优先处理 image_data（画笔编辑过的整张图）
+        image_data = char.get('image_data')
+        if image_data:
+            try:
+                payload = image_data.split(',', 1)[1] if ',' in image_data else image_data
+                img_bytes = base64.b64decode(payload)
+                img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_UNCHANGED)
+                if img is not None:
+                    cv2.imwrite(fp, img)
+                    h, w = img.shape[:2]
+                    char['width'] = w
+                    char['height'] = h
+                    painted += 1
+                    # 清掉一次性字段，避免污染 session
+                    char.pop('image_data', None)
+                else:
+                    print(f"image_data 解码失败 {filename}（cv2.imdecode 返回 None），跳过")
+            except Exception as e:
+                print(f"image_data 解码失败 {filename}: {e}")
+
+        a_top = int(char.get('adjust_top', 0) or 0)
+        a_bottom = int(char.get('adjust_bottom', 0) or 0)
+        a_left = int(char.get('adjust_left', 0) or 0)
+        a_right = int(char.get('adjust_right', 0) or 0)
+
+        # 全部为 0 则跳过裁剪
+        if a_top == 0 and a_bottom == 0 and a_left == 0 and a_right == 0:
+            # 重置 adjust 值（即便没裁剪也归零，标记已处理）
+            char['adjust_top'] = 0
+            char['adjust_bottom'] = 0
+            char['adjust_left'] = 0
+            char['adjust_right'] = 0
             continue
 
         img = cv2.imread(fp, cv2.IMREAD_UNCHANGED)
@@ -781,10 +814,10 @@ def save_adjustments():
     session_data['characters'] = characters
     save_session(image_hash, session_data, DATA_FOLDER)
 
-    if recropped:
-        print(f"保存调整: hash={image_hash}, 实际重剪 {recropped} 张")
+    if recropped or painted:
+        print(f"保存调整: hash={image_hash}, 重剪 {recropped}, 绘制 {painted}")
 
-    return jsonify({'success': True, 'recropped': recropped})
+    return jsonify({'success': True, 'recropped': recropped, 'painted': painted})
 
 
 @app.route('/api/delete_characters', methods=['POST'])

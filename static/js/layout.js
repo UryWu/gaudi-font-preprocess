@@ -1026,6 +1026,92 @@ function setRotateButtonsDisabled(disabled) {
 // 保存原始（未过滤）的 boxes，用于重置
 let masterBoxes = [];
 
+// 直方图竖线可拖动
+function initAreaHistogramDrag(canvas) {
+    if (!canvas) return;
+    let dragging = null;  // 'min' / 'max' / null
+
+    canvas.style.cursor = 'crosshair';
+
+    function getLineX(value) {
+        const padding = 4;
+        const W = canvas.width;
+        const areas = masterBoxes.map(b => b.width * b.height).filter(a => a > 0);
+        if (areas.length === 0) return 0;
+        const minA = Math.max(1, Math.min(...areas));
+        const maxA = Math.max(...areas);
+        const logMin = Math.log(minA);
+        const logMax = Math.log(maxA);
+        const BINS = 30;
+        const chartW = W - padding * 2;
+        const barW = chartW / BINS;
+        const logStep = (logMax - logMin) / BINS;
+        const x = padding + ((Math.log(value) - logMin) / logStep) * barW;
+        return { x, minA, maxA };
+    }
+
+    function xToValue(x) {
+        const padding = 4;
+        const W = canvas.width;
+        const areas = masterBoxes.map(b => b.width * b.height).filter(a => a > 0);
+        if (areas.length === 0) return 0;
+        const minA = Math.max(1, Math.min(...areas));
+        const maxA = Math.max(...areas);
+        const logMin = Math.log(minA);
+        const logMax = Math.log(maxA);
+        const BINS = 30;
+        const chartW = W - padding * 2;
+        const barW = chartW / BINS;
+        const logStep = (logMax - logMin) / BINS;
+        const value = Math.exp(logMin + (x - padding) / barW * logStep);
+        return Math.round(Math.max(1, Math.min(maxA, value)));
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const minV = parseInt(document.getElementById('minAreaInput').value, 10) || 0;
+        const maxV = parseInt(document.getElementById('maxAreaInput').value, 10) || 0;
+        const minX = getLineX(minV).x;
+        const maxX = getLineX(maxV).x;
+        // 选更近的那条（阈值 30px）
+        const distMin = Math.abs(x - minX);
+        const distMax = Math.abs(x - maxX);
+        const THRESHOLD = 30;
+        if (Math.min(distMin, distMax) > THRESHOLD) return;
+        dragging = distMin <= distMax ? 'min' : 'max';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.max(0, Math.min(canvas.width, e.clientX - rect.left));
+        const value = xToValue(x);
+        const targetId = dragging === 'min' ? 'minAreaInput' : 'maxAreaInput';
+        const input = document.getElementById(targetId);
+        const sliderId = dragging === 'min' ? 'minAreaSlider' : 'maxAreaSlider';
+        input.value = value;
+        document.getElementById(sliderId).value = value;
+        // 维持 min <= max
+        const minV = parseInt(document.getElementById('minAreaInput').value, 10);
+        const maxV = parseInt(document.getElementById('maxAreaInput').value, 10);
+        if (dragging === 'min' && minV > maxV) {
+            document.getElementById('maxAreaInput').value = minV;
+            document.getElementById('maxAreaSlider').value = minV;
+        } else if (dragging === 'max' && maxV < minV) {
+            document.getElementById('minAreaInput').value = maxV;
+            document.getElementById('minAreaSlider').value = maxV;
+        }
+        updateFilterStats();
+        renderAreaHistogram();
+    });
+
+    document.addEventListener('mouseup', () => {
+        dragging = null;
+    });
+}
+
 function initGreenBoxModal() {
     const modal = document.getElementById('greenBoxModal');
     const dialog = document.getElementById('greenBoxDialog');
@@ -1039,6 +1125,10 @@ function initGreenBoxModal() {
 
     // 拖动：从 header 拖动整个 dialog
     initModalDrag(dialog, header);
+
+    // 直方图竖线可拖动
+    const histogram = document.getElementById('areaHistogram');
+    if (histogram) initAreaHistogramDrag(histogram);
 
     // 8 个方向的 resize 手柄
     modal.querySelectorAll('.resize-handle').forEach(handle => {
@@ -1184,7 +1274,7 @@ function openGreenBoxModal() {
     // 初始化位置和大小（仅首次，之后保持用户调整的位置）
     if (!dialog.dataset.initialized) {
         const w = 560;
-        const h = 533;  // 原 650 - 15% - 20px
+        const h = 513;  // 原 650 - 15% - 20px - 20px
         const headerH = document.querySelector('.header').getBoundingClientRect().height;
         // 右边距离屏幕右边 20px，顶部距离 header 底边紧贴
         dialog.style.left = (window.innerWidth - w - 20) + 'px';
@@ -1435,11 +1525,10 @@ function applyGreenBoxFilter() {
     const pred = getCurrentFilterPredicate();
     const filtered = masterBoxes.filter(pred);
     state.boxes = filtered;
-    // 持久化当前过滤设置（下次打开模态自动加载）
     saveGreenBoxSettings();
     drawCanvas();
     updateUI();
-    document.getElementById('greenBoxModal').style.display = 'none';
+    // 不自动关闭模态，用户可看到对比效果
     showToast(`已过滤：保留 ${filtered.length} / ${masterBoxes.length} 个绿框`);
 }
 

@@ -337,7 +337,7 @@ function createAdjustModal() {
             <div class="modal-sidebar">
                 <div class="modal-header">
                     <h3>调整字符 - <span id="modalCharIndex">1</span></h3>
-                    <button class="btn btn-secondary" onclick="closeAdjustModal()">关闭</button>
+                    <button class="modal-close-x" onclick="closeAdjustModal()" title="关闭">×</button>
                 </div>
                 <div class="adjust-controls">
                     <h4>切割范围</h4>

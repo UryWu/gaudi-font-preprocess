@@ -842,10 +842,24 @@ body {
 .modal-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     margin-bottom: 15px;
     padding-bottom: 10px;
     border-bottom: 1px solid #e0e0e0;
+}
+
+.modal-close-x {
+    background: none;
+    border: none;
+    font-size: 28px;
+    line-height: 1;
+    color: #999;
+    cursor: pointer;
+    padding: 0 8px;
+    margin-left: auto;
+}
+.modal-close-x:hover {
+    color: #333;
 }
 
 .modal-header h3 {

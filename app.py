@@ -721,7 +721,7 @@ def clear_all_data():
 
 @app.route('/api/save_adjustments', methods=['POST'])
 def save_adjustments():
-    """保存调整结果"""
+    """保存调整结果：实际按 adjust_top/bottom/left/right 重剪图片"""
     data = request.get_json()
     image_hash = data.get('hash')
     characters = data.get('characters', [])
@@ -734,11 +734,57 @@ def save_adjustments():
     if not session_data:
         return jsonify({'error': '会话不存在'}), 404
 
+    # 按 adjust 值实际重剪 PNG 文件
+    output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
+    recropped = 0
+    for char in characters:
+        a_top = int(char.get('adjust_top', 0) or 0)
+        a_bottom = int(char.get('adjust_bottom', 0) or 0)
+        a_left = int(char.get('adjust_left', 0) or 0)
+        a_right = int(char.get('adjust_right', 0) or 0)
+
+        # 全部为 0 则跳过
+        if a_top == 0 and a_bottom == 0 and a_left == 0 and a_right == 0:
+            continue
+
+        filename = char.get('filename')
+        if not filename:
+            continue
+        fp = os.path.join(output_dir, filename)
+        if not os.path.exists(fp):
+            continue
+
+        img = cv2.imread(fp, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            continue
+
+        h, w = img.shape[:2]
+        top = max(0, min(a_top, h - 1))
+        bottom = max(top + 1, min(h - a_bottom, h))
+        left = max(0, min(a_left, w - 1))
+        right = max(left + 1, min(w - a_right, w))
+
+        if bottom > top and right > left:
+            cropped = img[top:bottom, left:right]
+            cv2.imwrite(fp, cropped)
+            char['width'] = right - left
+            char['height'] = bottom - top
+            recropped += 1
+
+        # 重剪后 adjust 值归零（已应用）
+        char['adjust_top'] = 0
+        char['adjust_bottom'] = 0
+        char['adjust_left'] = 0
+        char['adjust_right'] = 0
+
     # 更新字符数据
     session_data['characters'] = characters
     save_session(image_hash, session_data, DATA_FOLDER)
 
-    return jsonify({'success': True})
+    if recropped:
+        print(f"保存调整: hash={image_hash}, 实际重剪 {recropped} 张")
+
+    return jsonify({'success': True, 'recropped': recropped})
 
 
 @app.route('/api/delete_characters', methods=['POST'])

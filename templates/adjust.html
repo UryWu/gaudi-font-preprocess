@@ -47,23 +47,15 @@
     gap: 10px;
 }
 
-.cleanup-toolbar {
-    display: flex;
-    gap: 10px;
-    padding: 10px 20px;
-    background-color: #fff;
-    border-bottom: 1px solid #e0e0e0;
-    justify-content: flex-end;
-}
-
 .btn-outline-warning {
     background-color: #fff;
     border: 1px solid #e8a5a5;
     color: #c0392b;
-    padding: 8px 14px;
+    padding: 10px 16px;
     border-radius: 6px;
     font-size: 13px;
     cursor: pointer;
+    font-weight: 500;
 }
 
 .btn-outline-warning:hover {
@@ -75,10 +67,11 @@
     background-color: #fff;
     border: 1px solid #888;
     color: #555;
-    padding: 8px 14px;
+    padding: 10px 16px;
     border-radius: 6px;
     font-size: 13px;
     cursor: pointer;
+    font-weight: 500;
 }
 
 .btn-outline-danger:hover {
@@ -196,13 +189,9 @@
             <button id="saveBtn" class="btn btn-success">保存</button>
             <button id="adjustBtn" class="btn btn-primary" disabled>调整</button>
             <button id="scaleBtn" class="btn btn-primary" onclick="location.href='/scale'">缩放校正 &rarr;</button>
+            <button id="clearEmptyBtn" class="btn btn-outline-warning" title="删除所有空白字符的磁盘文件和session条目">一键清除空白字符</button>
+            <button id="clearAllBtn" class="btn btn-outline-danger" title="删除该图片的全部数据：output目录、session JSON、uploads原图">清空所有数据</button>
         </div>
-    </div>
-
-    <!-- 清理工具栏 -->
-    <div class="cleanup-toolbar">
-        <button id="clearEmptyBtn" class="btn btn-outline-warning" title="删除所有空白字符的磁盘文件和session条目">一键清除空白字符</button>
-        <button id="clearAllBtn" class="btn btn-outline-danger" title="删除该图片的全部数据：output目录、session JSON、uploads原图">清空所有数据</button>
     </div>
 
     <!-- 字符网格区域 -->

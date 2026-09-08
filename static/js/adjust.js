@@ -436,6 +436,7 @@ const canvasState = {
     originalRight: 0,
     // 画笔相关
     brushMode: false,         // 是否处于画笔模式（与拖拽裁剪互斥）
+    lastCursorPos: null,      // 画笔光标的最后位置（重绘时重新画）
     isPainting: false,        // 当前是否正在画
     overlayCanvas: null,      // 离屏 canvas，记录画笔笔触
     overlayCtx: null,
@@ -635,9 +636,14 @@ function redrawCanvas() {
         drawAdjustBox(ctx, canvas.width, canvas.height, char, canvasState.scale);
     }
 
-    // 把画笔覆盖层画在主 canvas 上方（仅在画笔模式下可见）
-    if (canvasState.brushMode && canvasState.overlayCanvas) {
+    // 笔触覆盖层始终绘制（Ctrl 松开时笔触不消失，避免被原图覆盖的"假象"）
+    if (canvasState.overlayCanvas) {
         ctx.drawImage(canvasState.overlayCanvas, 0, 0);
+    }
+
+    // 画笔模式下再画红色光标圈（不烘焙进图）
+    if (canvasState.brushMode && canvasState.lastCursorPos) {
+        drawBrushCursor(canvasState.lastCursorPos.x, canvasState.lastCursorPos.y);
     }
 }
 
@@ -860,6 +866,7 @@ function handleMouseMove(e) {
             canvas.style.cursor = 'none';
             redrawCanvas();
             drawBrushCursor(x, y);
+            canvasState.lastCursorPos = { x, y };
             return;
         }
         const edge = getEdgeAtPosition(x, y);

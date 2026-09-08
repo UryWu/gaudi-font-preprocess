@@ -17,6 +17,7 @@
 
     <!-- 左侧侧边导航：默认收起，鼠标触及最左边时弹出 -->
     <div class="side-nav-zone" id="sideNavZone"></div>
+    <button class="side-nav-handle" id="sideNavHandle" title="页面导航">≡</button>
     <nav class="side-nav" id="sideNav">
         <button class="side-nav-pin" id="sideNavPin" title="置顶/取消置顶">📌</button>
         <a href="/layout" class="side-nav-item {% if request.path == '/layout' or request.path == '/' %}active{% endif %}">切割布局</a>
@@ -36,21 +37,33 @@
         const zone = document.getElementById('sideNavZone');
         const nav = document.getElementById('sideNav');
         const pinBtn = document.getElementById('sideNavPin');
+        const handle = document.getElementById('sideNavHandle');
         if (!zone || !nav || !pinBtn) return;
 
         // 读取置顶状态
         let pinned = localStorage.getItem('sideNavPinned') === '1';
+
+        // 显示/隐藏：nav 展开时 handle 隐藏，nav 收起时 handle 显示
+        const show = () => {
+            nav.classList.add('visible');
+            if (handle) handle.classList.add('hidden');
+        };
+        const hide = () => {
+            if (pinned) return;
+            nav.classList.remove('visible');
+            if (handle) handle.classList.remove('hidden');
+        };
+
         if (pinned) {
             nav.classList.add('visible', 'pinned');
             pinBtn.classList.add('active');
+            if (handle) handle.classList.add('hidden');
         }
-
-        // 显示/隐藏
-        const show = () => nav.classList.add('visible');
-        const hide = () => { if (!pinned) nav.classList.remove('visible'); };
 
         // 触发区：mouseenter 显示
         zone.addEventListener('mouseenter', show);
+        // 提示按钮点击也展开
+        if (handle) handle.addEventListener('click', show);
         // 导航自身：mouseleave 时如果未置顶则收起
         nav.addEventListener('mouseleave', hide);
 

@@ -486,6 +486,11 @@ def apply_cuts():
     print(f"应用切割: hash={image_hash}, use_red={use_red}, use_blue={use_blue}, use_green={use_green}, "
           f"共 {len(cut_images)} 片")
 
+    # 同步写入 session_data['characters']，避免 /adjust 重新生成不一致结果
+    session_data = load_session(image_hash, DATA_FOLDER) or {'hash': image_hash}
+    session_data['characters'] = cut_images
+    save_session(image_hash, session_data, DATA_FOLDER)
+
     return jsonify({
         'success': True,
         'total_pieces': len(cut_images),

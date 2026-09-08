@@ -436,6 +436,7 @@ const canvasState = {
     originalRight: 0,
     // 画笔相关
     brushMode: false,         // 是否处于画笔模式（与拖拽裁剪互斥）
+    cutMode: false,           // 是否处于切割模式（需点击按钮进入）
     lastCursorPos: null,      // 画笔光标的最后位置（重绘时重新画）
     isPainting: false,        // 当前是否正在画
     overlayCanvas: null,      // 离屏 canvas，记录画笔笔触
@@ -470,11 +471,13 @@ function showAdjustModal(displayIndex) {
         setupBrushControls();
     }
 
-    // 每次打开都重置画笔状态（防止上一次绘画残留）
+    // 每次打开都重置画笔/切割状态（防止上一次残留）
     canvasState.brushMode = false;
+    canvasState.cutMode = false;
     canvasState.isPainting = false;
     canvasState.lastBrushPos = null;
     updateBrushToggleButton();
+    updateCutToggleButton();
 
     // 更新弹窗内容
     document.getElementById('modalCharIndex').textContent = displayIndex + 1;
@@ -524,7 +527,11 @@ function createAdjustModal() {
                     </div>
                 </div>
                 <div class="adjust-controls">
-                    <h4 style="margin-top: 12px; font-size: 13px; color: #555;">画笔</h4>
+                    <h4 style="margin-top: 12px; font-size: 13px; color: #555;">模式</h4>
+                    <button type="button" id="cutToggleBtn" onclick="toggleCutMode()"
+                        style="width: 100%; margin-bottom: 8px; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px;">
+                        ✂ 切割模式：关
+                    </button>
                     <button type="button" id="brushToggleBtn" onclick="toggleBrushMode()"
                         style="width: 100%; margin-bottom: 8px; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px;">
                         ✏ 画笔：关
@@ -631,8 +638,8 @@ function redrawCanvas() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-    // 画笔模式下不显示裁剪线（避免遮挡），让用户清晰看到画笔内容
-    if (!canvasState.brushMode) {
+    // 切割模式下才显示裁剪线（按按钮进入，避免与画笔冲突）
+    if (canvasState.cutMode) {
         drawAdjustBox(ctx, canvas.width, canvas.height, char, canvasState.scale);
     }
 
@@ -798,16 +805,19 @@ function handleMouseDown(e) {
         return;
     }
 
-    const edge = getEdgeAtPosition(x, y);
-    if (edge) {
-        canvasState.isDragging = true;
-        canvasState.dragEdge = edge;
-        canvasState.startX = x;
-        canvasState.startY = y;
-        canvasState.originalTop = canvasState.char.adjust_top || 0;
-        canvasState.originalBottom = canvasState.char.adjust_bottom || 0;
-        canvasState.originalLeft = canvasState.char.adjust_left || 0;
-        canvasState.originalRight = canvasState.char.adjust_right || 0;
+    // 切割模式：拖动裁剪边调整 trim
+    if (canvasState.cutMode) {
+        const edge = getEdgeAtPosition(x, y);
+        if (edge) {
+            canvasState.isDragging = true;
+            canvasState.dragEdge = edge;
+            canvasState.startX = x;
+            canvasState.startY = y;
+            canvasState.originalTop = canvasState.char.adjust_top || 0;
+            canvasState.originalBottom = canvasState.char.adjust_bottom || 0;
+            canvasState.originalLeft = canvasState.char.adjust_left || 0;
+            canvasState.originalRight = canvasState.char.adjust_right || 0;
+        }
     }
 }
 
@@ -859,13 +869,19 @@ function handleMouseMove(e) {
             canvasState.lastCursorPos = { x, y };
             return;
         }
-        const edge = getEdgeAtPosition(x, y);
-        if (edge === 'top' || edge === 'bottom') {
-            canvas.style.cursor = 'ns-resize';
-        } else if (edge === 'left' || edge === 'right') {
-            canvas.style.cursor = 'ew-resize';
+        // 切割模式：边缘可拖动时才显示 resize 光标
+        if (canvasState.cutMode) {
+            const edge = getEdgeAtPosition(x, y);
+            if (edge === 'top' || edge === 'bottom') {
+                canvas.style.cursor = 'ns-resize';
+            } else if (edge === 'left' || edge === 'right') {
+                canvas.style.cursor = 'ew-resize';
+            } else {
+                canvas.style.cursor = 'crosshair';
+            }
         } else {
-            canvas.style.cursor = 'crosshair';
+            // 非画笔 + 非切割 → 默认光标
+            canvas.style.cursor = 'default';
         }
     }
 }
@@ -969,6 +985,30 @@ function updateBrushToggleButton() {
     }
 }
 
+// 切换切割模式（需点击按钮进入，避
+// 免默认与画笔冲突；off 状态下不可拖动裁剪线）
+function toggleCutMode() {
+    canvasState.cutMode = !canvasState.cutMode;
+    updateCutToggleButton();
+    redrawCanvas();
+}
+
+function updateCutToggleButton() {
+    const btn = document.getElementById('cutToggleBtn');
+    if (!btn) return;
+    if (canvasState.cutMode) {
+        btn.textContent = '✂ 切割模式：开';
+        btn.style.background = '#e74c3c';
+        btn.style.color = '#fff';
+        btn.style.borderColor = '#e74c3c';
+    } else {
+        btn.textContent = '✂ 切割模式：关';
+        btn.style.background = '#f0f0f0';
+        btn.style.color = '';
+        btn.style.borderColor = '#ccc';
+    }
+}
+
 // 检测覆盖层是否真有非透明像素（用户是否真的画过）
 function hasPaintStrokes() {
     if (!canvasState.overlayCtx || !canvasState.overlayCanvas) return false;
@@ -1059,10 +1099,12 @@ function closeAdjustModal() {
     if (modal) {
         modal.classList.add('hidden');
     }
-    // 关闭时清画笔模式（按 Ctrl 时可能已开启）
+    // 关闭时清画笔/切割模式
     canvasState.brushMode = false;
+    canvasState.cutMode = false;
     canvasState.isPainting = false;
     updateBrushToggleButton();
+    updateCutToggleButton();
     adjustModalOpen = false;
     // 清除选择状态
     state.selectedIndices = [];

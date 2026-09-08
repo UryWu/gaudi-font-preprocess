@@ -741,7 +741,9 @@ function paintAt(x, y) {
     const colorInput = document.getElementById('brushColor');
     const sizeInput = document.getElementById('brushSizeInput');
     const color = colorInput ? colorInput.value : '#000000';
-    const size = sizeInput ? Math.max(1, parseInt(sizeInput.value) || 5) : 5;
+    const imgSize = sizeInput ? Math.max(1, parseInt(sizeInput.value) || 5) : 5;
+    // 图片坐标 → canvas 坐标：× scale
+    const size = imgSize * canvasState.scale;
 
     overlayCtx.fillStyle = color;
     overlayCtx.beginPath();

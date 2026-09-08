@@ -792,17 +792,62 @@ def save_adjustments():
             continue
 
         h, w = img.shape[:2]
-        top = max(0, min(a_top, h - 1))
-        bottom = max(top + 1, min(h - a_bottom, h))
-        left = max(0, min(a_left, w - 1))
-        right = max(left + 1, min(w - a_right, w))
 
-        if bottom > top and right > left:
-            cropped = img[top:bottom, left:right]
-            cv2.imwrite(fp, cropped)
-            char['width'] = right - left
-            char['height'] = bottom - top
-            recropped += 1
+        # 调整值语义：
+        # - 正值 = 收缩（向内裁掉对应行/列像素）
+        # - 负值 = 扩展（向外添加 |值| 行/列，黑色 [0,0,0] 填充）
+        # 新画布尺寸公式 new_h = h - a_top - a_bottom，a_top/a_bottom 可为负
+        new_h = h - a_top - a_bottom
+        new_w = w - a_left - a_right
+
+        # 边界校验：new_h/new_w 必须为正，否则跳过
+        # 典型无效情况：a_top + a_bottom >= h 或 a_left + a_right >= w
+        if new_h <= 0 or new_w <= 0:
+            print(f"无效裁剪范围: {filename}, new_h={new_h}, new_w={new_w}，跳过")
+            # 归零 adjust 值（已处理：拒绝应用）
+            char['adjust_top'] = 0
+            char['adjust_bottom'] = 0
+            char['adjust_left'] = 0
+            char['adjust_right'] = 0
+            continue
+
+        # 原图在新画布中的放置位置
+        # - 收缩（a_top >= 0）：原图 row a_top 起写到新画布 row 0
+        # - 扩展（a_top < 0）：原图 row 0 起写到新画布 row |a_top|，前面 |a_top| 行黑填
+        top_offset = max(0, -a_top)
+        left_offset = max(0, -a_left)
+
+        # 原图读取起点（处理收缩时跳过前 a_top 行/列）
+        source_top = max(0, a_top)
+        source_left = max(0, a_left)
+
+        # 实际可读取的尺寸：受原图剩余内容与新画布剩余空间双重限制
+        # 例：a_top=-10, a_bottom=0, h=100 → new_h=110, top_offset=10
+        #     source_top=0, source_h=min(100, 110-10)=100（读全部 100 行）
+        # 例：a_top=10, a_bottom=0, h=100 → new_h=90, top_offset=0
+        #     source_top=10, source_h=min(90, 90-0)=80（去掉前 10 行）
+        source_h = min(h - source_top, new_h - top_offset)
+        source_w = min(w - source_left, new_w - left_offset)
+
+        # 创建黑底画布
+        # - 灰度图（2D）：单通道，0 即黑
+        # - BGR/BGRA（3D）：保留原通道数，0 即黑
+        if img.ndim == 2:
+            new_img = np.zeros((new_h, new_w), dtype=img.dtype)
+        else:
+            new_img = np.zeros((new_h, new_w, img.shape[2]), dtype=img.dtype)
+
+        # 把原图对应区域贴到新画布的指定位置
+        # 黑填由 np.zeros 完成；扩展区自然保持 0
+        new_img[top_offset:top_offset + source_h,
+                left_offset:left_offset + source_w] = \
+            img[source_top:source_top + source_h,
+                source_left:source_left + source_w]
+
+        cv2.imwrite(fp, new_img)
+        char['width'] = new_w
+        char['height'] = new_h
+        recropped += 1
 
         # 重剪后 adjust 值归零（已应用）
         char['adjust_top'] = 0

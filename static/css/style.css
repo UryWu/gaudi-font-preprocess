@@ -819,6 +819,35 @@ body {
     font-weight: 600;
 }
 
+/* 字符图片右键菜单 */
+.char-context-menu {
+    position: fixed;
+    z-index: 10000;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    min-width: 200px;
+    padding: 4px 0;
+    user-select: none;
+}
+.char-context-menu .ctx-item {
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #333;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.char-context-menu .ctx-item:hover {
+    background: #eaf3f6;
+}
+.char-context-menu .ctx-item.danger {
+    color: #c0392b;
+}
+.char-context-menu .ctx-item.danger:hover {
+    background: #ffe8e8;
+}
+
 /* 调整弹窗 */
 .adjust-modal {
     position: fixed;

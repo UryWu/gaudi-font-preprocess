@@ -907,6 +907,37 @@ def delete_characters():
     })
 
 
+@app.route('/api/open_path', methods=['POST'])
+def open_path():
+    """在系统资源管理器中打开字符文件（Windows: explorer /select）"""
+    import subprocess
+    import sys
+    data = request.get_json()
+    filename = data.get('path', '')
+    image_hash = data.get('hash', '')
+
+    if not filename or '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'success': False, 'error': '非法文件名'}), 400
+
+    fp = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+    fp = os.path.abspath(fp)
+    if not os.path.exists(fp):
+        return jsonify({'success': False, 'error': '文件不存在'}), 404
+
+    try:
+        if sys.platform.startswith('win'):
+            # Windows: explorer /select,"<path>" 打开资源管理器并选中文件
+            subprocess.Popen(['explorer', '/select,', fp])
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', '-R', fp])
+        else:
+            # Linux: 打开父目录
+            subprocess.Popen(['xdg-open', os.path.dirname(fp)])
+        return jsonify({'success': True, 'path': fp})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/process_scale', methods=['POST'])
 def process_scale():
     """处理缩放校正"""

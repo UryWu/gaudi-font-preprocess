@@ -166,33 +166,83 @@ function createCharCard(char, displayIndex) {
     // 左键点击 - 选择/取消选择
     card.addEventListener('click', () => toggleSelectCard(card, displayIndex));
 
-    // 右键点击 - 删除字符
+    // 右键 - 自定义菜单（删除 / 在资源管理器中打开）
     card.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        deleteCharacter(char, displayIndex);
+        showCharContextMenu(e.clientX, e.clientY, char, displayIndex);
     });
 
     return card;
 }
 
-// 删除字符
+// 删除字符（无 confirm，由右键菜单直接调用）
 function deleteCharacter(char, displayIndex) {
-    if (confirm(`确定要删除第 ${displayIndex + 1} 号字符吗？`)) {
-        // 标记为已删除
-        char.deleted = true;
-
-        // 从数组中移除
-        const index = state.characters.indexOf(char);
-        if (index > -1) {
-            state.characters.splice(index, 1);
-        }
-
-        // 重新渲染
-        renderCharacterGrid();
-        updateUI();
-        showToast(`已删除第 ${displayIndex + 1} 号字符`);
+    char.deleted = true;
+    const index = state.characters.indexOf(char);
+    if (index > -1) {
+        state.characters.splice(index, 1);
     }
+    renderCharacterGrid();
+    updateUI();
+    showToast(`已删除 ${char.filename || '第' + (displayIndex + 1) + '号字符'}`);
 }
+
+// 显示字符图片的右键菜单
+function showCharContextMenu(x, y, char, displayIndex) {
+    hideCharContextMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'char-context-menu';
+    menu.id = 'charContextMenu';
+    menu.innerHTML = `
+        <div class="ctx-item danger" data-action="delete">🗑 删除</div>
+        <div class="ctx-item" data-action="open-folder">📁 在文件管理器中打开</div>
+    `;
+    // 定位（防止溢出视口）
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    document.body.appendChild(menu);
+
+    // 调整位置避免溢出
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+        menu.style.left = (x - rect.width) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+        menu.style.top = (y - rect.height) + 'px';
+    }
+
+    // 点击菜单项
+    menu.addEventListener('click', async (e) => {
+        const action = e.target.dataset.action;
+        hideCharContextMenu();
+        if (action === 'delete') {
+            deleteCharacter(char, displayIndex);
+        } else if (action === 'open-folder') {
+            try {
+                const r = await fetch('/api/open_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: char.filename, hash: state.imageHash })
+                });
+                const data = await r.json();
+                if (!data.success) throw new Error(data.error);
+                showToast(`已在资源管理器中打开 ${char.filename}`);
+            } catch (err) {
+                showToast('打开失败: ' + err.message);
+            }
+        }
+    });
+}
+
+function hideCharContextMenu() {
+    const existing = document.getElementById('charContextMenu');
+    if (existing) existing.remove();
+}
+
+// 全局点击其他地方关闭菜单
+document.addEventListener('click', hideCharContextMenu, true);
+document.addEventListener('scroll', hideCharContextMenu, true);
 
 // 批量删除选中的字符
 async function deleteSelectedCharacters() {

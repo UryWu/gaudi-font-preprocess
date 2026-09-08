@@ -1129,13 +1129,12 @@ async function confirmAdjust() {
         bakeOverlayToImage();
         const canvas = document.getElementById('adjustCanvas');
         try {
-            // 临时开启画笔模式抑制框线绘制（避免把红色 4 条边烤进图）
+            // 临时开启画笔模式抑制框线绘制（不重绘——否则刚烤的笔触会被擦掉）
             const prevBrushMode = canvasState.brushMode;
             canvasState.brushMode = true;
-            redrawCanvas();
             canvasState.char.image_data = canvas.toDataURL('image/png');
             canvasState.brushMode = prevBrushMode;
-            redrawCanvas();
+            redrawCanvas();  // 恢复显示（笔触已在 image_data 中，display 不再需要）
         } catch (e) {
             console.error('toDataURL 失败:', e);
             showToast('画笔内容编码失败，仍保存其他调整');

@@ -733,27 +733,27 @@ function handleMouseUp(e) {
     canvasState.dragEdge = null;
 }
 
-// 绘制画笔圆形光标（画在 overlay 层，与笔触同层）
+// 绘制画笔圆形光标（画在主 canvas，与 overlay 分开 → 不会烘焙进图）
 function drawBrushCursor(x, y) {
-    const overlayCtx = canvasState.overlayCtx;
-    if (!overlayCtx) return;
+    const canvas = document.getElementById('adjustCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
     const sizeInput = document.getElementById('brushSizeInput');
     if (!sizeInput) return;
-    // 画在主 canvas 坐标上（overlay 与主 canvas 同尺寸）
     const imgSize = parseInt(sizeInput.value, 10) || 1;
     const radius = (imgSize * canvasState.scale) / 2;
-    overlayCtx.save();
-    overlayCtx.beginPath();
-    overlayCtx.arc(x, y, radius, 0, Math.PI * 2);
-    overlayCtx.strokeStyle = '#e74c3c';
-    overlayCtx.lineWidth = 2;
-    overlayCtx.stroke();
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = '#e74c3c';
+    ctx.lineWidth = 2;
+    ctx.stroke();
     // 中心点
-    overlayCtx.beginPath();
-    overlayCtx.arc(x, y, 1.5, 0, Math.PI * 2);
-    overlayCtx.fillStyle = '#e74c3c';
-    overlayCtx.fill();
-    overlayCtx.restore();
+    ctx.beginPath();
+    ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#e74c3c';
+    ctx.fill();
+    ctx.restore();
 }
 
 // 在画笔覆盖层上画一个点（自动补点连线，避免快速移动时出现间断）

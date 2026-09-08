@@ -1047,3 +1047,34 @@ body {
     outline-offset: 1px;
 }
 
+/* /adjust 页面浮动按钮：回到顶部 / 到底部 */
+/* 仅在有字符时显示；初始 display:none，由 adjust.js 的 updateFloatBtns 控制 */
+.adjust-floating-btns {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    /* 低于 modal（z-index 通常 2000+），高于页面其他元素 */
+    z-index: 900;
+}
+.float-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid #ccc;
+    background: #fff;
+    color: #555;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    transition: background 0.15s, color 0.15s;
+}
+.float-btn:hover {
+    background: #4a90a4;
+    color: #fff;
+    border-color: #4a90a4;
+}
+

@@ -39,6 +39,23 @@ function setupEventListeners() {
     if (elements.clearEmptyBtn) elements.clearEmptyBtn.addEventListener('click', handleClearEmpty);
     if (elements.clearAllBtn) elements.clearAllBtn.addEventListener('click', handleClearAll);
 
+    // 浮动按钮：回到顶部 / 到底部
+    // 字符网格通常很长（800+ 张），手动滚动到底部很慢
+    // 按钮点击 → 平滑滚动到页面顶端 / 底端
+    const floatTopBtn = document.getElementById('floatTopBtn');
+    const floatBottomBtn = document.getElementById('floatBottomBtn');
+    if (floatTopBtn) {
+        floatTopBtn.addEventListener('click', () => {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    }
+    if (floatBottomBtn) {
+        floatBottomBtn.addEventListener('click', () => {
+            // scrollHeight 是整个文档的总高度，足够滚到最底
+            window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+        });
+    }
+
     // 画笔快捷键：仅在 adjust modal 打开时，按住 Ctrl 进入画笔模式
     // 颜色 / 大小直接用 modal 里的 brushColor + brushSizeInput
     document.addEventListener('keydown', (e) => {
@@ -429,6 +446,20 @@ function updateUI() {
         elements.adjustInfo.style.display = 'block';
     } else {
         elements.adjustInfo.style.display = 'none';
+    }
+
+    // 同步浮动按钮显示：没字符时隐藏，有字符时显示
+    updateFloatBtns();
+}
+
+// 控制浮动按钮（回到顶部 / 到底部）的可见性
+// 没字符时整组隐藏（避免空状态页上挂两个孤零零的按钮）
+// 有字符时整组显示
+function updateFloatBtns() {
+    const has = state.characters && state.characters.length > 0;
+    const container = document.getElementById('adjustFloatingBtns');
+    if (container) {
+        container.style.display = has ? 'flex' : 'none';
     }
 }
 

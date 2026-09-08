@@ -186,6 +186,13 @@
         <div id="charGrid" class="char-grid" style="display: none;"></div>
     </div>
 </div>
+
+<!-- 浮动按钮：回到顶部 / 到底部 -->
+<!-- 仅在有字符时显示，由 adjust.js 的 updateFloatBtns 控制 -->
+<div class="adjust-floating-btns" id="adjustFloatingBtns" style="display: none;">
+    <button class="float-btn" id="floatTopBtn" title="回到顶部" type="button">↑</button>
+    <button class="float-btn" id="floatBottomBtn" title="到底部" type="button">↓</button>
+</div>
 {% endblock %}
 
 {% block extra_js %}

@@ -5,6 +5,7 @@ data/sessions/
 input/
 output/
 static/uploads/
+my_font/
 *.pyc
 .DS_Store
 高迪字库_王羲之*/

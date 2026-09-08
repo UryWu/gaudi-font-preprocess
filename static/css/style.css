@@ -374,24 +374,26 @@ body {
     background-color: #eaf3f6;
 }
 
-/* 模态框 */
+/* 模态框（可拖动 + 可调整大小） */
 .modal-mask {
     position: fixed;
     inset: 0;
-    background-color: rgba(0, 0, 0, 0.4);
+    /* 不加全屏遮罩（用户要求），仅作为定位参考 */
     z-index: 2000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    pointer-events: none;
 }
 
 .modal-dialog {
+    position: absolute;
     background-color: #fff;
     border-radius: 8px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
+    min-width: 360px;
+    min-height: 320px;
+    pointer-events: auto;
 }
 
 .modal-header {
@@ -401,6 +403,8 @@ body {
     padding: 12px 16px;
     border-bottom: 1px solid #eee;
     flex-shrink: 0;
+    cursor: move;
+    user-select: none;
 }
 
 .modal-header h3 {
@@ -421,6 +425,21 @@ body {
 .modal-close:hover {
     color: #333;
 }
+
+/* 8 个 resize 手柄 */
+.resize-handle {
+    position: absolute;
+    background: transparent;
+    z-index: 10;
+}
+.resize-handle.n  { top: -3px;    left: 10px;    right: 10px;    height: 6px;    cursor: ns-resize; }
+.resize-handle.s  { bottom: -3px; left: 10px;    right: 10px;    height: 6px;    cursor: ns-resize; }
+.resize-handle.w  { left: -3px;   top: 10px;     bottom: 10px;    width: 6px;     cursor: ew-resize; }
+.resize-handle.e  { right: -3px;  top: 10px;     bottom: 10px;    width: 6px;     cursor: ew-resize; }
+.resize-handle.nw { top: -3px;    left: -3px;    width: 12px;     height: 12px;   cursor: nwse-resize; }
+.resize-handle.ne { top: -3px;    right: -3px;   width: 12px;     height: 12px;   cursor: nesw-resize; }
+.resize-handle.sw { bottom: -3px; left: -3px;    width: 12px;     height: 12px;   cursor: nesw-resize; }
+.resize-handle.se { bottom: -3px; right: -3px;   width: 12px;     height: 12px;   cursor: nwse-resize; }
 
 .modal-body {
     padding: 16px;

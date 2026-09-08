@@ -106,10 +106,18 @@
         </div>
 </div>
 
-<!-- 绿色框设置模态框 -->
+<!-- 绿色框设置模态框（可拖动 + 可调整大小） -->
 <div class="modal-mask" id="greenBoxModal" style="display: none;">
-    <div class="modal-dialog" style="width: 560px; height: 650px;">
-        <div class="modal-header">
+    <div class="modal-dialog" id="greenBoxDialog">
+        <div class="resize-handle n"></div>
+        <div class="resize-handle s"></div>
+        <div class="resize-handle w"></div>
+        <div class="resize-handle e"></div>
+        <div class="resize-handle nw"></div>
+        <div class="resize-handle ne"></div>
+        <div class="resize-handle sw"></div>
+        <div class="resize-handle se"></div>
+        <div class="modal-header" id="greenBoxHeader">
             <h3>绿色框设置</h3>
             <button class="modal-close" data-close="modal-close" title="关闭">×</button>
         </div>

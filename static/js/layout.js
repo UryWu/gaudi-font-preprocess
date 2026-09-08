@@ -1022,14 +1022,24 @@ let originalBoxes = [];
 
 function initGreenBoxModal() {
     const modal = document.getElementById('greenBoxModal');
-    if (!modal) return;
+    const dialog = document.getElementById('greenBoxDialog');
+    const header = document.getElementById('greenBoxHeader');
+    if (!modal || !dialog || !header) return;
 
-    // 关闭按钮（点 × 或取消 或点遮罩）
+    // 关闭按钮（点 × 或取消）
     modal.querySelectorAll('[data-close="modal-close"]').forEach(btn => {
         btn.addEventListener('click', () => { modal.style.display = 'none'; });
     });
-    modal.addEventListener('click', e => {
-        if (e.target === modal) modal.style.display = 'none';
+
+    // 拖动：从 header 拖动整个 dialog
+    initModalDrag(dialog, header);
+
+    // 8 个方向的 resize 手柄
+    modal.querySelectorAll('.resize-handle').forEach(handle => {
+        const dirs = Array.from(handle.classList)
+            .find(c => ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].includes(c.replace('resize-handle.', '').replace('handle-', '')))
+            || handle.classList[1];  // 第二类名是方向
+        initModalResize(dialog, handle, handle.classList[1]);
     });
 
     // 模式切换
@@ -1070,19 +1080,107 @@ function initGreenBoxModal() {
     document.getElementById('filterApplyBtn').addEventListener('click', applyGreenBoxFilter);
 }
 
+// 拖动：从 header 拖动整个 dialog
+function initModalDrag(dialog, handle) {
+    let startX, startY, origLeft, origTop;
+    handle.addEventListener('mousedown', (e) => {
+        if (e.target.tagName === 'BUTTON') return;  // 不要拦截关闭按钮
+        e.preventDefault();
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = dialog.getBoundingClientRect();
+        origLeft = rect.left;
+        origTop = rect.top;
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+    function onMove(e) {
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const newLeft = Math.max(0, origLeft + dx);
+        const newTop = Math.max(0, origTop + dy);
+        dialog.style.left = newLeft + 'px';
+        dialog.style.top = newTop + 'px';
+        dialog.style.right = 'auto';  // 解除 right 锚定，让 left/top 完全控制
+    }
+    function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+    }
+}
+
+// Resize：根据手柄方向调整 dialog 的 left/top/width/height
+function initModalResize(dialog, handle, dir) {
+    let startX, startY, origLeft, origTop, origW, origH;
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();  // 不冒泡到 header 的拖动
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = dialog.getBoundingClientRect();
+        origLeft = rect.left;
+        origTop = rect.top;
+        origW = rect.width;
+        origH = rect.height;
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+    function onMove(e) {
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const minW = 360, minH = 320;
+        let newLeft = origLeft, newTop = origTop;
+        let newW = origW, newH = origH;
+        if (dir.includes('e')) newW = Math.max(minW, origW + dx);
+        if (dir.includes('s')) newH = Math.max(minH, origH + dy);
+        if (dir.includes('w')) {
+            newW = Math.max(minW, origW - dx);
+            newLeft = origLeft + (origW - newW);
+        }
+        if (dir.includes('n')) {
+            newH = Math.max(minH, origH - dy);
+            newTop = origTop + (origH - newH);
+        }
+        dialog.style.left = newLeft + 'px';
+        dialog.style.top = newTop + 'px';
+        dialog.style.width = newW + 'px';
+        dialog.style.height = newH + 'px';
+        dialog.style.right = 'auto';
+        dialog.style.bottom = 'auto';
+    }
+    function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+    }
+}
+
 function openGreenBoxModal() {
     const modal = document.getElementById('greenBoxModal');
-    if (!modal) return;
+    const dialog = document.getElementById('greenBoxDialog');
+    if (!modal || !dialog) return;
 
     // 保存当前 boxes 作为"原始"，重置时回到这个状态
     originalBoxes = state.boxes.slice();
 
     // 自适应滑块范围
     autoAdjustRanges();
-
-    // 同步统计
     updateFilterStats();
-    modal.style.display = 'flex';
+
+    // 初始化位置和大小（仅首次，之后保持用户调整的位置）
+    if (!dialog.dataset.initialized) {
+        const wsRect = document.querySelector('.workspace').getBoundingClientRect();
+        const w = 560;
+        // 原 650 减去 15%（=97.5，取整 98），新高度约 552
+        const h = Math.round(650 - 650 * 0.15);
+        // 定位到图片预处理区域的右边
+        dialog.style.left = (wsRect.right - w - 20) + 'px';
+        dialog.style.top = (wsRect.top + 60) + 'px';
+        dialog.style.width = w + 'px';
+        dialog.style.height = h + 'px';
+        dialog.dataset.initialized = '1';
+    }
+
+    modal.style.display = 'block';
 }
 
 function updateFilterMode() {

@@ -361,6 +361,7 @@ function createAdjustModal() {
                         <h4>操作</h4>
                         <button class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;" onclick="resetAdjust()">重置</button>
                         <button class="btn btn-primary" style="width: 100%; margin-bottom: 8px;" onclick="applyAdjust()">应用</button>
+                        <button class="btn btn-success" style="width: 100%; margin-bottom: 8px;" onclick="confirmAdjust()">确定</button>
                         <button class="btn btn-success" style="width: 100%;" onclick="saveAndNext()">保存并下一个</button>
                     </div>
                 </div>
@@ -516,7 +517,7 @@ function getCanvasCoords(e) {
     return { x, y, rect };
 }
 
-// 检测鼠标在哪个边上
+// 检测鼠标在哪个边上（上下左右四条边）
 function getEdgeAtPosition(x, y) {
     const char = canvasState.char;
     const scale = canvasState.scale;
@@ -533,25 +534,25 @@ function getEdgeAtPosition(x, y) {
     const boxRight = canvas.width - right;
     const boxBottom = canvas.height - bottom;
 
-    // 检测右边 - x 在右边界附近
-    if (x >= boxRight - threshold && x <= canvas.width &&
-        y >= boxTop && y <= boxBottom) {
-        return 'right';
-    }
-    // 检测下边 - y 在下边界附近
-    if (y >= boxBottom - threshold && y <= canvas.height &&
-        x >= boxLeft && x <= boxRight) {
-        return 'bottom';
-    }
-    // 检测上边
-    if (y >= Math.max(0, boxTop - threshold) && y <= boxTop + threshold &&
+    // 上边：y 在 boxTop 附近（带 threshold），x 在 boxLeft~boxRight 之间
+    if (y >= boxTop - threshold && y <= boxTop + threshold &&
         x >= boxLeft && x <= boxRight) {
         return 'top';
     }
-    // 检测左边
-    if (x >= Math.max(0, boxLeft - threshold) && x <= boxLeft + threshold &&
+    // 下边：y 在 boxBottom 附近，x 在 boxLeft~boxRight 之间
+    if (y >= boxBottom - threshold && y <= boxBottom + threshold &&
+        x >= boxLeft && x <= boxRight) {
+        return 'bottom';
+    }
+    // 左边：x 在 boxLeft 附近，y 在 boxTop~boxBottom 之间
+    if (x >= boxLeft - threshold && x <= boxLeft + threshold &&
         y >= boxTop && y <= boxBottom) {
         return 'left';
+    }
+    // 右边：x 在 boxRight 附近，y 在 boxTop~boxBottom 之间
+    if (x >= boxRight - threshold && x <= boxRight + threshold &&
+        y >= boxTop && y <= boxBottom) {
+        return 'right';
     }
 
     return null;
@@ -670,6 +671,46 @@ function applyAdjust() {
     // 重新加载 canvas
     redrawCanvas();
     showToast('调整已应用');
+}
+
+// 确定：提交当前输入框的调整值，标记为「已调整」，并触发 session 保存
+async function confirmAdjust() {
+    if (!canvasState.char) return;
+
+    // 从输入框读取最终值（用户可能手动输入）
+    canvasState.char.adjust_top = parseInt(document.getElementById('adjustTop').value) || 0;
+    canvasState.char.adjust_bottom = parseInt(document.getElementById('adjustBottom').value) || 0;
+    canvasState.char.adjust_left = parseInt(document.getElementById('adjustLeft').value) || 0;
+    canvasState.char.adjust_right = parseInt(document.getElementById('adjustRight').value) || 0;
+    canvasState.char.needs_adjust = false;
+
+    // 重新加载 canvas
+    redrawCanvas();
+
+    // 触发 session 保存（与页面「保存」按钮走同一个接口）
+    showLoading('保存调整...');
+    try {
+        const response = await fetch('/api/save_adjustments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: state.imageHash,
+                characters: state.characters
+            })
+        });
+        const data = await response.json();
+        hideLoading();
+        if (data.success) {
+            showToast('已保存调整');
+            // 关闭弹窗并刷新网格（让「已调整」badge 出现）
+            closeAdjustModal();
+        } else {
+            throw new Error(data.error);
+        }
+    } catch (error) {
+        hideLoading();
+        showToast('保存失败: ' + error.message);
+    }
 }
 
 // 保存并下一个

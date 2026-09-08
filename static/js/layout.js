@@ -1206,28 +1206,83 @@ function autoAdjustRanges() {
     const wMax = Math.max(maxW * 1.2, 50);
     const hMax = Math.max(maxH * 1.2, 50);
 
-    // 面积模式：min=0, max=areaMax
+    // 设置上下限
     setRangeBounds('minAreaSlider', 'minAreaInput', 0, areaMax);
     setRangeBounds('maxAreaSlider', 'maxAreaInput', 0, areaMax);
-    document.getElementById('minAreaSlider').value = 0;
-    document.getElementById('minAreaInput').value = 0;
-    document.getElementById('maxAreaSlider').value = areaMax;
-    document.getElementById('maxAreaInput').value = areaMax;
-
-    // 长宽模式
     setRangeBounds('minWSlider', 'minWInput', 0, wMax);
     setRangeBounds('maxWSlider', 'maxWInput', 0, wMax);
-    document.getElementById('minWSlider').value = 0;
-    document.getElementById('minWInput').value = 0;
-    document.getElementById('maxWSlider').value = wMax;
-    document.getElementById('maxWInput').value = wMax;
-
     setRangeBounds('minHSlider', 'minHInput', 0, hMax);
     setRangeBounds('maxHSlider', 'maxHInput', 0, hMax);
-    document.getElementById('minHSlider').value = 0;
-    document.getElementById('minHInput').value = 0;
-    document.getElementById('maxHSlider').value = hMax;
-    document.getElementById('maxHInput').value = hMax;
+
+    // 优先加载上次保存的设置
+    const saved = loadGreenBoxSettings();
+    if (saved) {
+        // 模式
+        const modeRadio = document.querySelector(`input[name="filterMode"][value="${saved.mode || 'area'}"]`);
+        if (modeRadio) {
+            modeRadio.checked = true;
+            updateFilterMode();
+        }
+        // 数值（先 clamp 到当前上下限）
+        const setVal = (id, v) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.value = Math.max(parseInt(el.min, 10) || 0,
+                                Math.min(parseInt(el.max, 10) || v, v));
+        };
+        setVal('minAreaInput', saved.minArea);
+        setVal('maxAreaInput', saved.maxArea);
+        setVal('minWInput',   saved.minW);
+        setVal('maxWInput',   saved.maxW);
+        setVal('minHInput',   saved.minH);
+        setVal('maxHInput',   saved.maxH);
+    } else {
+        // 默认全选（不过滤）
+        document.getElementById('minAreaSlider').value = 0;
+        document.getElementById('minAreaInput').value = 0;
+        document.getElementById('maxAreaSlider').value = areaMax;
+        document.getElementById('maxAreaInput').value = areaMax;
+        document.getElementById('minWSlider').value = 0;
+        document.getElementById('minWInput').value = 0;
+        document.getElementById('maxWSlider').value = wMax;
+        document.getElementById('maxWInput').value = wMax;
+        document.getElementById('minHSlider').value = 0;
+        document.getElementById('minHInput').value = 0;
+        document.getElementById('maxHSlider').value = hMax;
+        document.getElementById('maxHInput').value = hMax;
+    }
+
+    // 同步滑块显示（input → slider）
+    ['minArea', 'maxArea', 'minW', 'maxW', 'minH', 'maxH'].forEach(k => {
+        const input = document.getElementById(`${k}Input`);
+        const slider = document.getElementById(`${k}Slider`);
+        if (input && slider) slider.value = input.value;
+    });
+}
+
+// localStorage 读写
+function saveGreenBoxSettings() {
+    const get = id => parseInt(document.getElementById(id).value, 10) || 0;
+    const mode = document.querySelector('input[name="filterMode"]:checked').value;
+    const data = {
+        mode,
+        minArea: get('minAreaInput'),
+        maxArea: get('maxAreaInput'),
+        minW: get('minWInput'),
+        maxW: get('maxWInput'),
+        minH: get('minHInput'),
+        maxH: get('maxHInput'),
+    };
+    localStorage.setItem('greenBoxSettings', JSON.stringify(data));
+}
+
+function loadGreenBoxSettings() {
+    try {
+        const s = localStorage.getItem('greenBoxSettings');
+        return s ? JSON.parse(s) : null;
+    } catch (e) {
+        return null;
+    }
 }
 
 function setRangeBounds(sliderId, inputId, min, max) {
@@ -1269,7 +1324,8 @@ function applyGreenBoxFilter() {
     const pred = getCurrentFilterPredicate();
     const filtered = originalBoxes.filter(pred);
     state.boxes = filtered;
-    // 重置标志：检测结果已变（cut_lines 还是旧的），点击切割来源时可能不一致
+    // 持久化当前过滤设置（下次打开模态自动加载）
+    saveGreenBoxSettings();
     drawCanvas();
     updateUI();
     document.getElementById('greenBoxModal').style.display = 'none';

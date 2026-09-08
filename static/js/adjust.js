@@ -686,31 +686,21 @@ function drawAdjustBox(ctx, canvasWidth, canvasHeight, char, scale) {
     ctx.setLineDash([]);
     ctx.strokeRect(x, y, w, h);
 
-    // 绘制四条可拖动的边（红色粗线）
-    ctx.fillStyle = '#e74c3c';
-    const edgeThickness = 6;
-
-    // 上边手柄
-    ctx.fillRect(x, Math.max(0, y - edgeThickness/2), w, edgeThickness);
-    // 下边手柄
-    ctx.fillRect(x, Math.min(canvasHeight - edgeThickness, y + h - edgeThickness/2), w, edgeThickness);
-    // 左边手柄
-    ctx.fillRect(Math.max(0, x - edgeThickness/2), y, edgeThickness, h);
-    // 右边手柄
-    ctx.fillRect(Math.min(canvasWidth - edgeThickness, x + w - edgeThickness/2), y, edgeThickness, h);
-
-    // 绘制四个角的手柄（更大的圆角方块）
-    const handleSize = 14;
-    ctx.fillStyle = '#e74c3c';
-
-    // 左上角
-    drawCornerHandle(ctx, x, y, handleSize, 'top-left');
-    // 右上角
-    drawCornerHandle(ctx, x + w, y, handleSize, 'top-right');
-    // 左下角
-    drawCornerHandle(ctx, x, y + h, handleSize, 'bottom-left');
-    // 右下角
-    drawCornerHandle(ctx, x + w, y + h, handleSize, 'bottom-right');
+    // 四条可拖动的边已关闭（用户要求不显示）
+    // 如需恢复，取消注释以下代码
+    // ctx.fillStyle = '#e74c3c';
+    // const edgeThickness = 6;
+    // ctx.fillRect(x, Math.max(0, y - edgeThickness/2), w, edgeThickness);
+    // ctx.fillRect(x, Math.min(canvasHeight - edgeThickness, y + h - edgeThickness/2), w, edgeThickness);
+    // ctx.fillRect(Math.max(0, x - edgeThickness/2), y, edgeThickness, h);
+    // ctx.fillRect(Math.min(canvasWidth - edgeThickness, x + w - edgeThickness/2), y, edgeThickness, h);
+    //
+    // const handleSize = 14;
+    // ctx.fillStyle = '#e74c3c';
+    // drawCornerHandle(ctx, x, y, handleSize, 'top-left');
+    // drawCornerHandle(ctx, x + w, y, handleSize, 'top-right');
+    // drawCornerHandle(ctx, x, y + h, handleSize, 'bottom-left');
+    // drawCornerHandle(ctx, x + w, y + h, handleSize, 'bottom-right');
 }
 
 // 绘制角落手柄

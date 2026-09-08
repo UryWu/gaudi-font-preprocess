@@ -721,20 +721,21 @@ function updateUI() {
     document.getElementById('boxCount').textContent = bCount;
 
     // 根据三色勾选状态计算预计切割
-    // 网格：仅在红+蓝同时勾选时贡献 = (v-1) * (h-1)
-    // 绿框：勾选时贡献 = boxes 数（实际会去重，客户端做粗估）
+    // 三勾选：去重后绿框胜出（框在格里时保留框），最终数量≈绿框数
+    // 单绿框：直接 = boxes 数
+    // 双勾选网格：= (v-1) × (h-1)
     let pieces = 0;
     const gridOn = state.useRedLines && state.useBlueLines;
-    if (gridOn) {
-        pieces += Math.max(0, (vCount - 1) * (hCount - 1));
-    }
+
     if (state.useGreenBoxes) {
-        pieces += bCount;
+        pieces = bCount;
+    } else if (gridOn) {
+        pieces = Math.max(0, (vCount - 1) * (hCount - 1));
     }
 
     const hint = document.getElementById('totalPiecesHint');
-    if (state.useRedLines && state.useBlueLines && state.useGreenBoxes) {
-        hint.textContent = '（含绿框，实际会去重）';
+    if (state.useGreenBoxes && gridOn) {
+        hint.textContent = '（绿框，网格被包含则丢弃）';
     } else if (state.useGreenBoxes) {
         hint.textContent = '（绿框）';
     } else if (gridOn) {

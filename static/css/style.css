@@ -342,6 +342,25 @@ body {
     50%      { box-shadow: 0 0 0 6px rgba(230, 126, 34, 0); }
 }
 
+.panel-header-with-actions {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+}
+
+.header-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.header-actions .btn,
+.header-actions .btn-detect {
+    padding: 6px 12px;
+    font-size: 13px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
 .panel-section {
     margin-bottom: 20px;
 }

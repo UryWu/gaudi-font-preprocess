@@ -14,7 +14,7 @@ gaudi-font-preprocess/
 ├── app.py                       # Flask 主应用，路由 + API
 ├── config.py                    # 路径常量、图像处理参数
 ├── pyproject.toml               # uv 项目定义（Python 3.10–3.13）
-├── 启动.bat / 启动.ps1          # 用户启动脚本（PyInstaller 兼容）
+├── run.bat / run.ps1            # 用户启动脚本（PyInstaller 兼容）
 ├── templates/                   # 五个页面模板
 │   ├── base.html                # 全局 layout（侧边导航 + 顶栏）
 │   ├── layout.html              # 页面1：切割布局
@@ -57,7 +57,7 @@ gaudi-font-preprocess/
 
 ```bash
 # 启动（默认 http://localhost:7500）
-双击 启动.bat                     # 用户入口
+双击 run.bat                      # 用户入口
 python app.py                     # 直接启动
 
 # 依赖（uv 优先，pip 也行）

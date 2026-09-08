@@ -80,7 +80,7 @@
 
 ### 方式一：独立运行版（推荐）
 
-从 [GitHub Release](https://github.com/gaudi1209/gaudi-font-preprocess/releases) 下载最新的 `高迪书法字库预处理工具.zip`，解压后双击 `启动.bat` 即可使用，无需安装 Python 及任何依赖。
+从 [GitHub Release](https://github.com/gaudi1209/gaudi-font-preprocess/releases) 下载最新的 `高迪书法字库预处理工具.zip`，解压后双击 `run.bat` 即可使用，无需安装 Python 及任何依赖。
 
 ### 方式二：从源码运行
 
@@ -95,7 +95,7 @@ uv sync
 # 或：使用 pip
 pip install -r requirements.txt
 
-# 启动（推荐双击 启动.bat）
+# 启动（推荐双击 run.bat）
 python app.py
 ```
 

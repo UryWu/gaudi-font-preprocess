@@ -472,7 +472,7 @@ function createAdjustModal() {
                     <h4 style="margin-top: 12px; font-size: 13px; color: #555;">画笔</h4>
                     <button type="button" id="brushToggleBtn" onclick="toggleBrushMode()"
                         style="width: 100%; margin-bottom: 8px; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px;">
-                        ✏ 画笔模式：关
+                        ✏ 画笔：关
                     </button>
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                         <label style="font-size: 12px;">颜色:</label>
@@ -906,12 +906,12 @@ function updateBrushToggleButton() {
     const btn = document.getElementById('brushToggleBtn');
     if (!btn) return;
     if (canvasState.brushMode) {
-        btn.textContent = '✏ 画笔模式：开';
+        btn.textContent = '✏ 画笔：开';
         btn.style.background = '#4a90a4';
         btn.style.color = '#fff';
         btn.style.borderColor = '#4a90a4';
     } else {
-        btn.textContent = '✏ 画笔模式：关';
+        btn.textContent = '✏ 画笔：关';
         btn.style.background = '#f0f0f0';
         btn.style.color = '';
         btn.style.borderColor = '#ccc';

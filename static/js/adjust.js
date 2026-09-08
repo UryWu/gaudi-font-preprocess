@@ -681,7 +681,10 @@ function handleMouseMove(e) {
     } else {
         // 更新光标样式（仅在裁剪模式下有意义）
         if (canvasState.brushMode) {
-            canvas.style.cursor = 'crosshair';
+            // 画笔模式：隐藏系统光标，绘制自定义圆形指示
+            canvas.style.cursor = 'none';
+            redrawCanvas();
+            drawBrushCursor(x, y);
             return;
         }
         const edge = getEdgeAtPosition(x, y);
@@ -704,6 +707,41 @@ function handleMouseUp(e) {
     }
     canvasState.isDragging = false;
     canvasState.dragEdge = null;
+}
+
+// 绘制画笔圆形光标（canvas 坐标）
+function drawBrushCursor(x, y) {
+    const canvas = document.getElementById('adjustCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const sizeInput = document.getElementById('brushSizeInput');
+    const colorInput = document.getElementById('brushColor');
+    if (!sizeInput || !colorInput) return;
+    // sizeInput 是图片坐标（像素），需要 × scale 转为 canvas 坐标
+    const imgSize = parseInt(sizeInput.value, 10) || 1;
+    const radius = (imgSize * canvasState.scale) / 2;
+    const color = colorInput.value;
+    const strokeColor = isLightColor(color) ? '#000' : color;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // 中心点
+    ctx.beginPath();
+    ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = strokeColor;
+    ctx.fill();
+    ctx.restore();
+}
+
+function isLightColor(hex) {
+    if (!hex || hex[0] !== '#') return false;
+    const r = parseInt(hex.substr(1, 2), 16);
+    const g = parseInt(hex.substr(3, 2), 16);
+    const b = parseInt(hex.substr(5, 2), 16);
+    return (r * 0.299 + g * 0.587 + b * 0.114) > 160;
 }
 
 // 在画笔覆盖层上画一个点（自动补点连线，避免快速移动时出现间断）

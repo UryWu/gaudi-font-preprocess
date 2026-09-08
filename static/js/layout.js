@@ -207,6 +207,10 @@ function setupEventListeners() {
             }
         });
     }
+
+    // 撤销 / 重做
+    if (undoBtn) undoBtn.addEventListener('click', undo);
+    if (redoBtn) redoBtn.addEventListener('click', redo);
 }
 
 function resizeCanvas() {
@@ -313,6 +317,12 @@ async function handleImageUpload(e) {
         state.detectionStale = false;
         detectBtn.classList.remove('btn-detect-stale');
         updateRotationDisplay();
+
+        // 全新开始：清空历史 + 记录初始状态
+        state.history = [];
+        state.historyRedo = [];
+        pushHistory();
+        updateUndoRedoButtons();
 
     } catch (error) {
         hideLoading();
@@ -532,6 +542,7 @@ function handleMouseDown(e) {
         (panForceElForMerge.tagName === 'INPUT' && panForceElForMerge.checked)
     );
     if (state.mergeMode && !isPanForceForMerge) {
+        pushHistory();  // 合并操作前回退点
         const startImg = canvasToImage(pos);
         state.merging = true;
         state.mergeRect = { x1: startImg.x, y1: startImg.y, x2: startImg.x, y2: startImg.y };
@@ -562,6 +573,7 @@ function handleMouseDown(e) {
         const dir = findBoxHandle(pos, hovered.box);
         if (dir) {
             // 开始 resize
+            pushHistory();  // 绿框缩放前回退点
             const startImg = canvasToImage(pos);
             state.resizingBox = {
                 index: hovered.index,
@@ -583,6 +595,7 @@ function handleMouseDown(e) {
             return;
         }
         // 开始拖动绿框
+        pushHistory();  // 绿框移动前回退点
         const imgPos = canvasToImage(pos);
         state.draggingBox = {
             index: hovered.index,
@@ -600,6 +613,7 @@ function handleMouseDown(e) {
         deleteLine(lineInfo);
         return;
     } else if (lineInfo) {
+        pushHistory();  // 切割线拖动前回退点
         state.selectedLine = lineInfo.lineIndex !== undefined ? lineInfo.lineIndex : lineInfo.index;
         state.lineType = lineInfo.type;
         state.selectedLineValue = lineInfo.yValue;
@@ -835,6 +849,7 @@ function handleDoubleClick(e) {
 // 删除指定索引的绿框
 function deleteBox(index) {
     if (index < 0 || index >= state.boxes.length) return;
+    pushHistory();  // 删除绿框前回退点
     state.boxes.splice(index, 1);
     // 同步主集（如果在过滤场景下，按对应 id 同步）
     if (masterBoxes && masterBoxes.length > 0) {
@@ -857,6 +872,7 @@ function deleteBox(index) {
 
 // 在指定列添加横向切割线
 function addHorizontalLineAt(y, stripIndex) {
+    pushHistory();  // 添加横线前回退点
     const roundedY = Math.round(y);
 
     console.log(`添加横向切割线: y=${roundedY}, stripIndex=${stripIndex}`);
@@ -1028,6 +1044,7 @@ function clampBoxToImage(box) {
 }
 
 function addLineAt(type, position) {
+    pushHistory();  // 添加切割线前回退点
     if (type === 'vertical') {
         const newX = Math.round(position);
         state.verticalLines.push(newX);
@@ -1119,6 +1136,7 @@ function updateStripHorizontalLines() {
 }
 
 function deleteLine(lineInfo) {
+    pushHistory();  // 删除切割线前回退点
     if (lineInfo.type === 'vertical') {
         if (lineInfo.index === 0 || lineInfo.index === state.verticalLines.length - 1) {
             showToast('无法删除边界线');
@@ -1292,6 +1310,7 @@ async function handleRotate(delta) {
     if (!state.imageHash) return;
     if (state.isRotating || state.isDetecting) return;
 
+    pushHistory();  // 手动旋转前回退点
     state.isRotating = true;
     setRotateButtonsDisabled(true);
     showLoading('正在旋转...');
@@ -1348,6 +1367,7 @@ async function handleResetRotation() {
     if (state.isRotating || state.isDetecting) return;
     if (state.cumulativeRotation === 0) return;
 
+    pushHistory();  // 重置旋转前回退点
     state.isRotating = true;
     setRotateButtonsDisabled(true);
     showLoading('正在重置...');
@@ -1403,6 +1423,7 @@ async function handleDetect() {
     if (!state.imageHash) return;
     if (state.isRotating || state.isDetecting) return;
 
+    pushHistory();  // 识别前回退点（可撤销识别结果）
     state.isDetecting = true;
     setRotateButtonsDisabled(true);
     detectBtn.disabled = true;
@@ -1966,6 +1987,7 @@ function updateFilterStats() {
 }
 
 function applyGreenBoxFilter() {
+    pushHistory();  // 应用绿框过滤前回退点
     const pred = getCurrentFilterPredicate();
     const filtered = masterBoxes.filter(pred);
     state.boxes = filtered;
@@ -2044,6 +2066,7 @@ function openEditBoxModal(index) {
 
 function applyEditBox() {
     if (editingBoxIndex < 0 || editingBoxIndex >= state.boxes.length) return;
+    pushHistory();  // 编辑绿框前回退点
     const box = state.boxes[editingBoxIndex];
 
     const get = id => parseInt(document.getElementById(id).value, 10);
@@ -2147,6 +2170,8 @@ function performMerge() {
             inside.push({ idx, box });
         }
     });
+
+    if (inside.length > 0) pushHistory();  // 合并前回退点（仅当实际合并时）
 
     if (inside.length === 0) {
         showToast('框内没有绿框');

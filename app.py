@@ -603,6 +603,122 @@ def get_cut_results(image_hash):
     })
 
 
+@app.route('/api/clear_empty_chars', methods=['POST'])
+def clear_empty_chars():
+    """清除所有空白字符：删除磁盘文件 + 从 session 中移除"""
+    import os
+    data = request.get_json()
+    image_hash = data.get('hash')
+
+    if not image_hash:
+        return jsonify({'success': False, 'error': '缺少图片哈希'}), 400
+
+    session_data = load_session(image_hash, DATA_FOLDER)
+    if not session_data:
+        return jsonify({'success': False, 'error': '会话不存在'}), 404
+
+    characters = session_data.get('characters', [])
+    if not characters:
+        return jsonify({'success': False, 'error': '没有字符数据'}), 400
+
+    # 区分空白和非空
+    kept = []
+    removed_files = []
+    for c in characters:
+        if c.get('is_empty'):
+            # 删除磁盘文件
+            filename = c.get('filename')
+            if filename:
+                file_path = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+                if os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                        removed_files.append(filename)
+                    except Exception as e:
+                        print(f"删除空白切片失败 {filename}: {e}")
+        else:
+            kept.append(c)
+
+    if not removed_files:
+        return jsonify({'success': False, 'error': '没有空白字符可清除'}), 400
+
+    # 重新编号：index 重新分配，filename 也重命名（char_NNNN.png）
+    # 简化处理：保留原 filename，只更新 session 和磁盘列表
+    # 由于原 filename 按切割顺序排列，去除空白后序号会"跳跃"
+    # 为保持连续，重命名磁盘文件
+    for new_idx, c in enumerate(kept):
+        old_filename = c.get('filename')
+        new_filename = f"char_{new_idx:04d}.png"
+        if old_filename != new_filename:
+            old_path = os.path.join(OUTPUT_FOLDER, image_hash, old_filename)
+            new_path = os.path.join(OUTPUT_FOLDER, image_hash, new_filename)
+            if os.path.exists(old_path):
+                try:
+                    os.rename(old_path, new_path)
+                except Exception as e:
+                    print(f"重命名失败 {old_filename} -> {new_filename}: {e}")
+            c['filename'] = new_filename
+            c['image_url'] = f'/output/{image_hash}/{new_filename}'
+            c['index'] = new_idx
+
+    # 写回 session
+    session_data['characters'] = kept
+    save_session(image_hash, session_data, DATA_FOLDER)
+
+    print(f"清除空白: hash={image_hash}, 移除 {len(removed_files)} 个, 保留 {len(kept)} 个")
+
+    return jsonify({
+        'success': True,
+        'removed_count': len(removed_files),
+        'remaining_count': len(kept),
+        'characters': kept
+    })
+
+
+@app.route('/api/clear_all_data', methods=['POST'])
+def clear_all_data():
+    """清空该图片的所有数据：删除磁盘目录 + 删除 session JSON"""
+    import shutil
+    data = request.get_json()
+    image_hash = data.get('hash')
+
+    if not image_hash:
+        return jsonify({'success': False, 'error': '缺少图片哈希'}), 400
+
+    # 删除 output 目录
+    output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
+    if os.path.exists(output_dir):
+        try:
+            shutil.rmtree(output_dir)
+        except Exception as e:
+            print(f"删除 output 目录失败: {e}")
+            return jsonify({'success': False, 'error': f'删除 output 目录失败: {e}'}), 500
+
+    # 删除 session JSON
+    session_path = os.path.join(DATA_FOLDER, f"{image_hash}.json")
+    if os.path.exists(session_path):
+        try:
+            os.remove(session_path)
+        except Exception as e:
+            print(f"删除 session 失败: {e}")
+
+    # 删除 uploads 里的原图和基准图（保留原图副本可选）
+    for suffix in ['.png', '_base.png', '_original.png']:
+        upload_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{image_hash}{suffix}")
+        if os.path.exists(upload_path):
+            try:
+                os.remove(upload_path)
+            except Exception as e:
+                print(f"删除 upload {suffix} 失败: {e}")
+
+    print(f"清空所有数据: hash={image_hash}")
+
+    return jsonify({
+        'success': True,
+        'message': '已清空 output、session、uploads'
+    })
+
+
 @app.route('/api/save_adjustments', methods=['POST'])
 def save_adjustments():
     """保存调整结果"""

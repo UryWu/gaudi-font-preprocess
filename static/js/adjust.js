@@ -17,7 +17,9 @@ const elements = {
     adjustCount: document.getElementById('adjustCount'),
     adjustInfo: document.getElementById('adjustInfo'),
     saveBtn: document.getElementById('saveBtn'),
-    adjustBtn: document.getElementById('adjustBtn')
+    adjustBtn: document.getElementById('adjustBtn'),
+    clearEmptyBtn: document.getElementById('clearEmptyBtn'),
+    clearAllBtn: document.getElementById('clearAllBtn')
 };
 
 // 初始化
@@ -29,6 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
     elements.saveBtn.addEventListener('click', saveAdjustments);
     elements.adjustBtn.addEventListener('click', openAdjustModal);
+    if (elements.clearEmptyBtn) elements.clearEmptyBtn.addEventListener('click', handleClearEmpty);
+    if (elements.clearAllBtn) elements.clearAllBtn.addEventListener('click', handleClearAll);
 }
 
 // 加载切割结果
@@ -675,4 +679,62 @@ async function saveAdjustments() {
     }
 
     hideLoading();
+}
+
+// 一键清除空白字符
+async function handleClearEmpty() {
+    if (!state.imageHash) return;
+    const emptyCount = state.characters.filter(c => c.is_empty).length;
+    if (emptyCount === 0) {
+        showToast('当前没有空白字符');
+        return;
+    }
+    if (!confirm(`确定要删除 ${emptyCount} 张空白字符吗？\n（磁盘文件 + session 都会同步）`)) return;
+
+    showLoading('正在清除空白字符...');
+    try {
+        const r = await fetch('/api/clear_empty_chars', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: state.imageHash })
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+
+        state.characters = data.characters;
+        // 重新排序后 strip_index / char_index 可能不再连续，但本页只用于展示
+        renderCharacterGrid();
+        updateUI();
+        hideLoading();
+        showToast(`已清除 ${data.removed_count} 个空白，剩余 ${data.remaining_count} 个`);
+    } catch (error) {
+        hideLoading();
+        showToast('清除失败: ' + error.message);
+    }
+}
+
+// 清空所有数据
+async function handleClearAll() {
+    if (!state.imageHash) return;
+    if (!confirm(`确定要清空这张图片的全部数据吗？\n\n将删除：\n• output 目录（含所有切割字符图）\n• session 配置 JSON\n• uploads 原图和基准图\n\n此操作不可撤销！`)) return;
+
+    showLoading('正在清空所有数据...');
+    try {
+        const r = await fetch('/api/clear_all_data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: state.imageHash })
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+
+        hideLoading();
+        showToast('已清空所有数据，2秒后返回切割布局');
+        // 清空 localStorage hash 并跳转
+        localStorage.removeItem('currentImageHash');
+        setTimeout(() => { window.location.href = '/layout'; }, 2000);
+    } catch (error) {
+        hideLoading();
+        showToast('清空失败: ' + error.message);
+    }
 }

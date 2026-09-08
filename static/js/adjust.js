@@ -135,7 +135,7 @@ function createCharCard(char, displayIndex) {
     // 兼容老数据：image_url 缺失时根据 hash + filename 构造
     // 追加时间戳防止浏览器缓存重剪后的同名 PNG
     const baseUrl = char.image_url || `/output/${state.imageHash}/${char.filename}`;
-    img.src = baseUrl;
+    img.src = `${baseUrl}?v=${char.cache_version || 0}`;
     img.title = char.filename || '';
     img.alt = `字符 ${displayIndex + 1}`;
 
@@ -200,6 +200,37 @@ async function deleteCharacter(char, displayIndex) {
     renderCharacterGrid();
     updateUI();
     showToast(`已删除 ${char.filename || '第' + (displayIndex + 1) + '号字符'}`);
+}
+
+// 只刷新单个字符卡片（图 + 状态标签），不重渲其他 858 张
+function reloadOneCharCard(char) {
+    if (!char || !char.filename) return;
+    // 找 grid 中对应的卡片
+    const card = document.querySelector(`.char-card[data-char-id="${char.strip_index}_${char.char_index}"]`);
+    if (!card) return;
+    // 找图标签，更新 src（用最新 cache_version 重新加载）
+    const img = card.querySelector('img.char-image');
+    if (img) {
+        const baseUrl = char.image_url || `/output/${state.imageHash}/${char.filename}`;
+        img.src = `${baseUrl}?v=${char.cache_version || 0}&t=${Date.now()}`;
+    }
+    // 状态标签：把旧的「已调整」/「需调整」badge 移除（已调整完）
+    const oldBadge = card.querySelector('.char-status');
+    if (oldBadge) oldBadge.remove();
+    // 重新评估是否需要 badge：adjust_* 全为 0 时已调整完
+    const hasAdjust = (char.adjust_top || 0) > 0 || (char.adjust_bottom || 0) > 0 ||
+                      (char.adjust_left || 0) > 0 || (char.adjust_right || 0) > 0;
+    if (hasAdjust) {
+        const status = document.createElement('div');
+        status.className = 'char-status adjusted';
+        status.textContent = '已调整';
+        card.appendChild(status);
+    } else if (char.is_empty) {
+        const status = document.createElement('div');
+        status.className = 'char-status empty-slice';
+        status.textContent = '空白';
+        card.appendChild(status);
+    }
 }
 
 // 显示字符图片的右键菜单
@@ -1030,6 +1061,8 @@ async function confirmAdjust() {
     canvasState.char.adjust_left = parseInt(document.getElementById('adjustLeft').value) || 0;
     canvasState.char.adjust_right = parseInt(document.getElementById('adjustRight').value) || 0;
     canvasState.char.needs_adjust = false;
+    // 调整值变了（即使是 0→0），标记 cache_version 触发 grid 重新加载
+    canvasState.char.cache_version = (canvasState.char.cache_version || 0) + 1;
 
     // 把画笔覆盖层烘焙到主 canvas，并把整张画好的图作为 image_data 发到服务器
     // 只有真正画过任何像素才发送，避免无谓地增大 payload
@@ -1066,6 +1099,8 @@ async function confirmAdjust() {
         hideLoading();
         if (data.success) {
             showToast('已保存调整');
+            // 只更新当前修改的卡片图片（不重渲全部 859 张）
+            reloadOneCharCard(canvasState.char);
             // 关闭弹窗并刷新网格（让「已调整」badge 出现）
             closeAdjustModal();
         } else {

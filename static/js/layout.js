@@ -370,12 +370,17 @@ function handleMouseDown(e) {
     // 左键处理
     if (e.button !== 0) return;
 
+    // 「总是平移」勾选框效果 = 一直按住 Ctrl
+    const panForce = document.getElementById('panForceToggle');
+    const isPanForce = panForce && panForce.checked;
+    const ctrl = e.ctrlKey || isPanForce;
+
     const lineInfo = findNearestLine(pos);
 
     if (lineInfo && e.altKey) {
         // Alt+点击删除切割线
         deleteLine(lineInfo);
-    } else if (lineInfo && !e.ctrlKey) {
+    } else if (lineInfo && !ctrl) {
         // 开始拖动切割线（按住 Ctrl 时跳过，强制平移）
         state.selectedLine = lineInfo.lineIndex !== undefined ? lineInfo.lineIndex : lineInfo.index;
         state.lineType = lineInfo.type;

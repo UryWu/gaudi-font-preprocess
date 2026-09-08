@@ -7,6 +7,10 @@
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <button id="uploadBtn" class="btn btn-primary">上传图片</button>
     <button id="detectBtn" class="btn-detect" disabled title="对当前旋转重新检测文本框和切割线">开始识别</button>
+    <label class="checkbox-label" title="勾上后左键拖动=平移图片（不触发切割线拖动/绿框点击）" style="color: #fff; margin-left: 8px;">
+        <input type="checkbox" id="panForceToggle" style="accent-color: #f39c12;">
+        <span>总是平移</span>
+    </label>
 </div>
 {% endblock %}
 

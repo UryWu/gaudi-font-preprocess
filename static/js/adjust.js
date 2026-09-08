@@ -56,6 +56,17 @@ function setupEventListeners() {
             canvasState.isPainting = false;
             updateBrushToggleButton();
         }
+        // Enter 快捷键 → 触发「确定」
+        // 排除任何修饰键（避免与浏览器/系统快捷键冲突）和多行文本输入场景
+        // confirmAdjust 内部会从输入框读最新值，所以即使焦点在 number input 上也安全
+        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            const tag = (e.target && e.target.tagName) || '';
+            // 当前 modal 仅有 number/button 输入，理论上不会触发 TEXTAREA 分支，留作防御
+            if (tag !== 'TEXTAREA' && !(e.target && e.target.isContentEditable)) {
+                e.preventDefault();
+                confirmAdjust();
+            }
+        }
     });
     document.addEventListener('keyup', (e) => {
         if (!adjustModalOpen) return;

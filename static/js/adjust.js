@@ -507,6 +507,10 @@ function createAdjustModal() {
                 <div class="modal-header">
                     <h3>调整字符 - <span id="modalCharIndex">1</span></h3>
                 </div>
+                <button type="button" id="cutToggleBtn" onclick="toggleCutMode()"
+                    style="width: 100%; margin-bottom: 8px; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px;">
+                    ✂ 切割模式：关
+                </button>
                 <div class="adjust-controls">
                     <h4>切割范围</h4>
                     <div class="control-row">
@@ -528,10 +532,6 @@ function createAdjustModal() {
                 </div>
                 <div class="adjust-controls">
                     <h4 style="margin-top: 12px; font-size: 13px; color: #555;">模式</h4>
-                    <button type="button" id="cutToggleBtn" onclick="toggleCutMode()"
-                        style="width: 100%; margin-bottom: 8px; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px;">
-                        ✂ 切割模式：关
-                    </button>
                     <button type="button" id="brushToggleBtn" onclick="toggleBrushMode()"
                         style="width: 100%; margin-bottom: 8px; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px;">
                         ✏ 画笔：关

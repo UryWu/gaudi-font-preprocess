@@ -2,6 +2,14 @@
 
 {% block title %}切割布局 - 高迪书法字库预处理工具{% endblock %}
 
+{% block header_actions %}
+<div class="header-actions">
+    <input type="file" id="imageInput" accept="image/*" style="display: none;">
+    <button id="uploadBtn" class="btn btn-primary">上传图片</button>
+    <button id="detectBtn" class="btn-detect" disabled title="对当前旋转重新检测文本框和切割线">开始识别</button>
+</div>
+{% endblock %}
+
 {% block content %}
 <div class="main-container">
     <!-- 左侧图片工作区 -->
@@ -14,17 +22,12 @@
 
     <!-- 右侧操作面板 -->
     <div class="panel">
-        <div class="panel-header panel-header-with-actions">
+        <div class="panel-header">
             <h2>图片预处理</h2>
             <label class="checkbox-label" title="上传时自动校正图片倾斜">
                 <input type="checkbox" id="deskewToggle" checked>
                 <span>启用纠偏</span>
             </label>
-            <div class="header-actions">
-                <input type="file" id="imageInput" accept="image/*" style="display: none;">
-                <button id="uploadBtn" class="btn btn-primary">上传图片</button>
-                <button id="detectBtn" class="btn-detect" disabled title="对当前旋转重新检测文本框和切割线">开始识别</button>
-            </div>
         </div>
 
         <div class="panel-section">

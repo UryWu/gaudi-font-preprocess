@@ -1274,7 +1274,7 @@ function openGreenBoxModal() {
     // 初始化位置和大小（仅首次，之后保持用户调整的位置）
     if (!dialog.dataset.initialized) {
         const w = 560;
-        const h = 513;  // 原 650 - 15% - 20px - 20px
+        const h = 453;
         const headerH = document.querySelector('.header').getBoundingClientRect().height;
         // 右边距离屏幕右边 20px，顶部距离 header 底边紧贴
         dialog.style.left = (window.innerWidth - w - 20) + 'px';

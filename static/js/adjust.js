@@ -8,6 +8,9 @@ const state = {
     currentAdjustIndex: null
 };
 
+// 调整 modal 是否打开（控制 Ctrl 画笔快捷键的可用性）
+let adjustModalOpen = false;
+
 // DOM 元素
 const elements = {
     loadingState: document.getElementById('loadingState'),
@@ -35,6 +38,42 @@ function setupEventListeners() {
     if (elements.deleteBtn) elements.deleteBtn.addEventListener('click', deleteSelectedCharacters);
     if (elements.clearEmptyBtn) elements.clearEmptyBtn.addEventListener('click', handleClearEmpty);
     if (elements.clearAllBtn) elements.clearAllBtn.addEventListener('click', handleClearAll);
+
+    // 画笔快捷键：仅在 adjust modal 打开时，按住 Ctrl 进入画笔模式
+    // 颜色 / 大小直接用 modal 里的 brushColor + brushSizeInput
+    document.addEventListener('keydown', (e) => {
+        if (!adjustModalOpen) return;
+        // 纯 Ctrl（无 Shift/Alt/Meta）才触发
+        if (e.key === 'Control' && !e.shiftKey && !e.altKey && !e.metaKey) {
+            if (!canvasState.brushMode) {
+                canvasState.brushMode = true;
+                updateBrushToggleButton();
+            }
+        }
+        // Escape 强制退出画笔模式
+        if (e.key === 'Escape' && canvasState.brushMode) {
+            canvasState.brushMode = false;
+            canvasState.isPainting = false;
+            updateBrushToggleButton();
+        }
+    });
+    document.addEventListener('keyup', (e) => {
+        if (!adjustModalOpen) return;
+        // Ctrl 松开 → 自动退出画笔模式
+        if (e.key === 'Control' && canvasState.brushMode) {
+            canvasState.brushMode = false;
+            canvasState.isPainting = false;
+            updateBrushToggleButton();
+        }
+    });
+    // 窗口失焦时也退出（比如 Alt+Tab 切走）
+    window.addEventListener('blur', () => {
+        if (canvasState.brushMode) {
+            canvasState.brushMode = false;
+            canvasState.isPainting = false;
+            updateBrushToggleButton();
+        }
+    });
 }
 
 // 加载切割结果
@@ -406,6 +445,9 @@ function showAdjustModal(displayIndex) {
     const char = orderedChars[displayIndex];
 
     if (!char) return;
+
+    // 标记 modal 开启（Ctrl 快捷键需要此状态）
+    adjustModalOpen = true;
 
     // 创建弹窗
     let modal = document.getElementById('adjustModal');
@@ -1008,6 +1050,11 @@ function closeAdjustModal() {
     if (modal) {
         modal.classList.add('hidden');
     }
+    // 关闭时清画笔模式（按 Ctrl 时可能已开启）
+    canvasState.brushMode = false;
+    canvasState.isPainting = false;
+    updateBrushToggleButton();
+    adjustModalOpen = false;
     // 清除选择状态
     state.selectedIndices = [];
     state.currentAdjustIndex = null;

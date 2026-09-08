@@ -205,6 +205,16 @@ function createCharCard(char, displayIndex) {
     // 左键点击 - 选择/取消选择
     card.addEventListener('click', () => toggleSelectCard(card, displayIndex));
 
+    // 双击 - 直接打开该字符的调整 modal（无需先选中）
+    card.addEventListener('dblclick', () => {
+        state.currentAdjustIndex = displayIndex;
+        // 临时把 selectedIndices 设成 [this] 让 applyAdjust/saveAndNext 工作正常
+        if (!state.selectedIndices.includes(displayIndex)) {
+            state.selectedIndices = [displayIndex];
+        }
+        showAdjustModal(displayIndex);
+    });
+
     // 右键 - 自定义菜单（删除 / 在资源管理器中打开）
     card.addEventListener('contextmenu', (e) => {
         e.preventDefault();

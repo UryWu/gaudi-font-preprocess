@@ -105,14 +105,19 @@ function setupEventListeners() {
         }
     });
 
-    // 滚动位置记忆：debounce 250ms 写入 localStorage
+    // 滚动位置记忆：监听 .char-grid-container（body 是 overflow:hidden）
     let _scrollTimer = null;
-    window.addEventListener('scroll', () => {
-        if (_scrollTimer) clearTimeout(_scrollTimer);
-        _scrollTimer = setTimeout(() => {
-            try { localStorage.setItem('gaudiAdjustScrollY', String(window.scrollY)); } catch (e) {}
-        }, 250);
-    });
+    const gridContainer = document.querySelector('.char-grid-container');
+    if (gridContainer) {
+        gridContainer.addEventListener('scroll', () => {
+            if (_scrollTimer) clearTimeout(_scrollTimer);
+            _scrollTimer = setTimeout(() => {
+                try {
+                    localStorage.setItem('gaudiAdjustScrollY', String(gridContainer.scrollTop));
+                } catch (e) {}
+            }, 250);
+        });
+    }
 }
 
 // 加载切割结果
@@ -145,10 +150,15 @@ async function loadCutResults() {
         updateUI();
 
         // 恢复滚动位置（debounced 写入 localStorage）
+        // 注：body 是 overflow:hidden，真正滚动的是 .char-grid-container
         try {
             const savedY = parseInt(localStorage.getItem('gaudiAdjustScrollY') || '0', 10);
             if (savedY > 0) {
-                setTimeout(() => window.scrollTo(0, savedY), 0);
+                setTimeout(() => {
+                    const grid = document.getElementById('charGrid')?.parentElement
+                        || document.querySelector('.char-grid-container');
+                    if (grid) grid.scrollTop = savedY;
+                }, 0);
             }
         } catch (e) {}
 

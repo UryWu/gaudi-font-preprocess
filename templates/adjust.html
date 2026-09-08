@@ -163,6 +163,7 @@
         <div class="action-buttons">
             <button id="backBtn" class="btn btn-secondary" onclick="location.href='/layout'">返回</button>
             <button id="saveBtn" class="btn btn-success">保存</button>
+            <button id="deleteSelectedBtn" class="btn btn-danger" disabled title="删除选中的字符图片与标注">删除选中</button>
             <button id="adjustBtn" class="btn btn-primary" disabled>调整</button>
             <button id="scaleBtn" class="btn btn-primary" onclick="location.href='/scale'">缩放校正 &rarr;</button>
             <button id="clearEmptyBtn" class="btn btn-warning" title="删除所有空白字符的磁盘文件和session条目">一键清除空白字符</button>
@@ -189,5 +190,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=18"></script>
-<script src="{{ url_for('static', filename='js/adjust.js') }}?v=21"></script>
+<script src="{{ url_for('static', filename='js/adjust.js') }}?v=22"></script>
 {% endblock %}

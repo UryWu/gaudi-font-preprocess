@@ -741,6 +741,48 @@ def save_adjustments():
     return jsonify({'success': True})
 
 
+@app.route('/api/delete_characters', methods=['POST'])
+def delete_characters():
+    """批量删除指定字符：删除磁盘文件 + 从 session 中移除对应条目"""
+    data = request.get_json()
+    image_hash = data.get('hash')
+    filenames = data.get('filenames', [])
+
+    if not image_hash or not filenames:
+        return jsonify({'success': False, 'error': '缺少参数'}), 400
+
+    deleted = []
+    for fn in filenames:
+        if not fn or '..' in fn or '/' in fn or '\\' in fn:  # 防路径穿越
+            continue
+        fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
+        if os.path.exists(fp):
+            try:
+                os.remove(fp)
+                deleted.append(fn)
+            except Exception as e:
+                print(f"删除 {fn} 失败: {e}")
+
+    # 更新 session characters 字段：移除这些
+    session_data = load_session(image_hash, DATA_FOLDER)
+    if session_data and 'characters' in session_data:
+        deleted_set = set(deleted)
+        session_data['characters'] = [
+            c for c in session_data['characters']
+            if c.get('filename') not in deleted_set
+        ]
+        save_session(image_hash, session_data, DATA_FOLDER)
+
+    remaining = len(session_data.get('characters', [])) if session_data else 0
+    print(f"批量删除字符: hash={image_hash}, 删除 {len(deleted)} 个, 剩余 {remaining} 个")
+
+    return jsonify({
+        'success': True,
+        'deleted_count': len(deleted),
+        'remaining_count': remaining
+    })
+
+
 @app.route('/api/process_scale', methods=['POST'])
 def process_scale():
     """处理缩放校正"""

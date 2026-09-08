@@ -18,6 +18,7 @@ const elements = {
     adjustInfo: document.getElementById('adjustInfo'),
     saveBtn: document.getElementById('saveBtn'),
     adjustBtn: document.getElementById('adjustBtn'),
+    deleteBtn: document.getElementById('deleteSelectedBtn'),
     clearEmptyBtn: document.getElementById('clearEmptyBtn'),
     clearAllBtn: document.getElementById('clearAllBtn')
 };
@@ -31,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
     elements.saveBtn.addEventListener('click', saveAdjustments);
     elements.adjustBtn.addEventListener('click', openAdjustModal);
+    if (elements.deleteBtn) elements.deleteBtn.addEventListener('click', deleteSelectedCharacters);
     if (elements.clearEmptyBtn) elements.clearEmptyBtn.addEventListener('click', handleClearEmpty);
     if (elements.clearAllBtn) elements.clearAllBtn.addEventListener('click', handleClearAll);
 }
@@ -189,6 +191,43 @@ function deleteCharacter(char, displayIndex) {
     }
 }
 
+// 批量删除选中的字符
+async function deleteSelectedCharacters() {
+    if (state.selectedIndices.length === 0) return;
+
+    const chars = state.characters;
+    const deleteSet = new Set(state.selectedIndices);
+    const toDelete = chars.filter((_, i) => deleteSet.has(i));
+
+    if (!confirm(`确定删除 ${toDelete.length} 个字符？此操作不可撤销。`)) return;
+
+    showLoading('正在删除...');
+    try {
+        const r = await fetch('/api/delete_characters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: state.imageHash,
+                filenames: toDelete.map(c => c.filename)
+            })
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+
+        // 客户端：移除已选字符
+        state.characters = chars.filter((_, i) => !deleteSet.has(i));
+        state.selectedIndices = [];
+        hideLoading();
+        renderCharacterGrid();
+        updateUI();
+        updateAdjustButton();
+        showToast(`已删除 ${toDelete.length} 个字符`);
+    } catch (error) {
+        hideLoading();
+        showToast('删除失败: ' + error.message);
+    }
+}
+
 // 选择/取消选择卡片
 function toggleSelectCard(card, index) {
     card.classList.toggle('selected');
@@ -205,7 +244,9 @@ function toggleSelectCard(card, index) {
 
 // 更新调整按钮状态
 function updateAdjustButton() {
-    elements.adjustBtn.disabled = state.selectedIndices.length === 0;
+    const hasSelection = state.selectedIndices.length > 0;
+    elements.adjustBtn.disabled = !hasSelection;
+    if (elements.deleteBtn) elements.deleteBtn.disabled = !hasSelection;
 }
 
 // 更新UI

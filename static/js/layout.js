@@ -1337,13 +1337,15 @@ function renderAreaHistogram() {
         ctx.fillRect(x + 1, y, Math.max(1, barW - 2), h);
     }
 
-    // 标注：min/max 边界线（橙色）
-    ctx.strokeStyle = '#e67e22';
+    // 标注：min 边界线（绿色，过滤掉面积小于此值的框）
+    ctx.strokeStyle = '#27ae60';
     ctx.lineWidth = 2;
     if (minV > minA && minV < maxA) {
         const xMin = padding + ((Math.log(minV) - logMin) / logStep) * barW;
         ctx.beginPath(); ctx.moveTo(xMin, 0); ctx.lineTo(xMin, H); ctx.stroke();
     }
+    // 标注：max 边界线（红色，过滤掉面积大于此值的框）
+    ctx.strokeStyle = '#e74c3c';
     if (maxV > minA && maxV < maxA) {
         const xMax = padding + ((Math.log(maxV) - logMin) / logStep) * barW;
         ctx.beginPath(); ctx.moveTo(xMax, 0); ctx.lineTo(xMax, H); ctx.stroke();

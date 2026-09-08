@@ -2813,7 +2813,7 @@ function keyEventToShortcut(e) {
 
 // 把存储字符串转为人类可读文本
 function formatShortcutDisplay(value) {
-    if (!value) return '（无）';
+    if (!value) return '';
     // 把内部 token 转成更易读的形式
     return value
         .replace(/DoubleClickBox/g, '双击绿框')
@@ -2859,17 +2859,17 @@ function renderInstructions() {
     const lines = [];
     lines.push('<p><strong>缩放图片：</strong>鼠标滚轮</p>');
     // 强制平移：合并 pan + panWithCtrl
-    const panPan = f(s.pan);
+    const panPan = f(s.pan) || SHORTCUT_META.pan.label;
     const panCtrl = f(s.panWithCtrl);
     lines.push(`<p><strong>强制平移模式：</strong>${panPan} / ${panCtrl}（任意位置）</p>`);
     lines.push(`<p><strong>添加横向线：</strong>${f(s.addHLine)}图片</p>`);
     lines.push(`<p><strong>添加纵向线：</strong>${f(s.addVLine)}图片</p>`);
-    lines.push(`<p><strong>移动切割线：</strong>${f(s.dragLine)}靠近线后拖动</p>`);
+    lines.push(`<p><strong>移动切割线：</strong>${f(s.dragLine) || '左键靠近线后拖动'}</p>`);
     lines.push(`<p><strong>删除切割线：</strong>${f(s.deleteLine)}线</p>`);
     lines.push('<p><span style="color: #e74c3c;">红色线</span> = 纵向切割</p>');
     lines.push('<p><span style="color: #3498db;">蓝色线</span> = 横向切割</p>');
     lines.push('<p><span style="color: #2ecc71;">绿色虚线</span> = 文本框</p>');
-    lines.push(`<p><strong>移动绿框：</strong>${f(s.dragBox)}绿框；绿框上显示 8 个调整手柄可缩放</p>`);
+    lines.push(`<p><strong>移动绿框：</strong>${f(s.dragBox) || '左键拖动绿框'}；绿框上显示 8 个调整手柄可缩放</p>`);
     lines.push(`<p><strong>编辑绿框：</strong>${f(s.editBox)}绿框打开编辑器（修改 x/y/宽/高）</p>`);
     lines.push(`<p><strong>删除绿框：</strong>${f(s.deleteBox)}绿框</p>`);
     lines.push(`<p><strong>标记绿框：</strong>${f(s.markBoxes)}框选区域，自动添加一个绿框</p>`);

@@ -382,6 +382,7 @@ async function loadOcrAnnotations() {
             const idx = fnToIdx[filename];
             if (idx === undefined) continue;   // 记录对应卡不在当前列表（删除/改名），跳过
             const simplified = typeof rec === 'string' ? rec : (rec.simplified || '');
+            const traditional = typeof rec === 'object' ? (rec.traditional || '') : '';
             const conf = typeof rec === 'object' ? (rec.conf || 0) : 0;
             if (!simplified) continue;
             const card = document.querySelector(`.char-card[data-index="${idx}"]`);
@@ -404,8 +405,16 @@ async function loadOcrAnnotations() {
                 badge.title = `OCR 置信度 ${conf}`;
                 card.appendChild(badge);
             }
-            // 触发自动转繁（填繁体框）
-            convertSingleToTraditional(simplified, idx);
+            // 繁体：存过就直接填（不再调转换接口）；没存过才 fallback 转换一次
+            if (traditional) {
+                const tradInput = card.querySelector('.traditional-input');
+                if (tradInput) tradInput.value = traditional;
+                const tradUtf = card.querySelector('.traditional-utf');
+                if (tradUtf) tradUtf.textContent = getUtfCode(traditional);
+                state.characters[idx].traditional = traditional;
+            } else {
+                convertSingleToTraditional(simplified, idx);
+            }
             count++;
         }
         if (count > 0) {
@@ -426,6 +435,7 @@ function saveOcrAnnotation(filename, simplified, opts) {
     if (!state.imageHash || !filename) return;
     const body = { filename, simplified: simplified || '' };
     if (simplified && opts) {
+        if (opts.traditional !== undefined) body.traditional = opts.traditional;
         if (opts.conf !== undefined) body.conf = opts.conf;
         if (opts.source) body.source = opts.source;
     }
@@ -783,6 +793,8 @@ function getUtfCode(char) {
 }
 
 // 单字转换
+// 简体→繁体并填入繁体框。返回繁体结果（失败返回 ''），
+// 便于调用方把它一并存进 ocr_annotations.json（刷新时不再重复转换）。
 async function convertSingleToTraditional(char, index) {
     try {
         const response = await fetch('/api/convert_to_traditional', {
@@ -802,10 +814,12 @@ async function convertSingleToTraditional(char, index) {
                 tradUtf.textContent = getUtfCode(data.result);
                 state.characters[index].traditional = data.result;
             }
+            return data.result;
         }
     } catch (error) {
         console.error('转换失败:', error);
     }
+    return '';
 }
 
 async function convertSingleToSimplified(char, index) {
@@ -1382,18 +1396,20 @@ function applyOcrResult(result, targets, threshold) {
     badge.title = `OCR 置信度 ${result.confidence}（阈值 ${threshold}）`;
     card.appendChild(badge);
 
-    // 自动转繁体
-    convertSingleToTraditional(result.character, target.idx);
-
+    // 自动转繁体（async），完成后把繁体一并存盘，刷新时不再重复转换
     ocrState.applied++;
     if (isHigh) ocrState.highConf++; else ocrState.lowConf++;
     console.log(`[OCR DEBUG] 填入 ${result.filename} → '${result.character}' (conf=${result.confidence}, ${result.engine}, idx=${target.idx})`);
 
-    // 持久化到服务器（fire-and-forget，不阻塞 UI）
-    // key = target.fn（scaled_0002.png 稳定标识），带 conf/source
-    saveOcrAnnotation(target.fn, result.character, {
-        conf: result.confidence,
-        source: result.engine || 'ocr'
+    // 先转繁体再持久化：拿到 traditional 后连同 simplified/conf/source 一起存
+    // （后端 worker 直写时无 traditional，这里前端补全；转换失败则存空串，
+    //  刷新时 loadOcrAnnotations 会 fallback 重新转换）
+    convertSingleToTraditional(result.character, target.idx).then(trad => {
+        saveOcrAnnotation(target.fn, result.character, {
+            traditional: trad || '',
+            conf: result.confidence,
+            source: result.engine || 'ocr'
+        });
     });
 }
 

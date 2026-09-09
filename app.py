@@ -1236,7 +1236,7 @@ _ocr_annotations_lock = threading.Lock()
 
 
 def _persist_one_ocr_annotation(image_hash, filename, simplified, conf=0.0, source='ocr',
-                                now=None, keep_manual=True):
+                                traditional=None, now=None, keep_manual=True):
     """写/删单条标注到 ocr_annotations.json（调用方须已持有 _ocr_annotations_lock）。
 
     供三处共用，保证写入逻辑唯一：
@@ -1271,8 +1271,12 @@ def _persist_one_ocr_annotation(image_hash, filename, simplified, conf=0.0, sour
         # 保护已有人工标注（manual 标记）的卡——除非显式覆盖（keep_manual=False）
         if keep_manual and isinstance(existing, dict) and existing.get('source') == 'manual':
             return False
+        # traditional 缺省时继承旧记录（worker 直写无 traditional 时保留旧的）
+        if traditional is None and isinstance(existing, dict):
+            traditional = existing.get('traditional', '')
         annotations[filename] = {
             'simplified': simplified,
+            'traditional': traditional or '',
             'conf': round(float(conf), 3),
             'source': source,
             'updated_at': now or datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
@@ -1312,13 +1316,15 @@ def save_ocr_annotation(image_hash):
     simplified = data.get('simplified') or data.get('char') or data.get('simp') or ''
     conf = data.get('conf') or 0.0
     source = data.get('source') or 'ocr'
+    traditional = data.get('traditional')
 
     if not filename:
         return jsonify({'success': False, 'error': '缺少 filename'}), 400
 
-    # 前端 OCR 填卡时实时写。source='ocr'，不覆盖已有 manual 标注
+    # 前端 OCR 填卡时实时写（带繁体）。source='ocr'，不覆盖已有 manual 标注
     with _ocr_annotations_lock:
-        _persist_one_ocr_annotation(image_hash, filename, simplified, conf, source)
+        _persist_one_ocr_annotation(image_hash, filename, simplified, conf, source,
+                                    traditional=traditional)
     return jsonify({'success': True})
 
 
@@ -1365,8 +1371,11 @@ def bulk_save_ocr_annotations(image_hash):
             # 已存在的 manual 标注 → 不覆盖（用户可能后端手动改过）
             if isinstance(existing, dict) and existing.get('source') == 'manual':
                 continue
+            # traditional 继承已有记录（OCR 已算好的繁体，别丢）
+            prev_trad = existing.get('traditional', '') if isinstance(existing, dict) else ''
             annotations[filename] = {
                 'simplified': simplified,
+                'traditional': prev_trad,
                 'conf': existing.get('conf', 0.0) if isinstance(existing, dict) else 0.0,
                 'source': 'manual',
                 'updated_at': now,

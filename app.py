@@ -1239,10 +1239,13 @@ _ocr_annotations_lock = threading.Lock()
 def save_ocr_annotation(image_hash):
     """保存/删除单条 OCR 标注（持久化到 data/sessions/<hash>/ocr_annotations.json）
 
-    请求体: { idx: int, char: str }
-    行为:
-    - char 非空：写入 ocr_annotations.json[idx] = char（覆盖旧值）
-    - char 为空：删除该条 —— 用户手动改了 OCR 结果的卡不应再被恢复
+    请求体: { idx: int, simp: str, conf?: float, source?: 'ocr'|'manual' }
+    兼容旧前端传 { idx, char }（char 当 simp）。
+
+    存储值：对象（更详细，刷新页面可完整恢复）：
+        {"simp":"牲","conf":0.995,"source":"ocr","updated_at":"2026-09-09T18:26:07"}
+    - simp 非空：写入（覆盖旧值）
+    - simp 为空：删除该条 —— 用户手动改了 OCR 结果的卡不应再被恢复
     - 与 cutting.json 分开存：OCR 标注是用户数据，cutting 是几何/算法状态
 
     并发安全：OCR 每填一张卡就 POST 一次，且前端轮询一次会连续 POST 多条。
@@ -1252,9 +1255,12 @@ def save_ocr_annotation(image_hash):
     不用 os.replace 原子替换：Windows 上 replace 覆盖「被读方打开的」
     文件会抛 PermissionError，反而不稳。
     """
+    from datetime import datetime
     data = request.get_json() or {}
     idx = data.get('idx')
-    char = data.get('char', '')
+    simp = data.get('simp') or data.get('char') or ''   # 兼容旧字段名 char
+    conf = data.get('conf') or 0.0
+    source = data.get('source') or 'ocr'
 
     if idx is None:
         return jsonify({'success': False, 'error': '缺少 idx'}), 400
@@ -1271,10 +1277,16 @@ def save_ocr_annotation(image_hash):
                 print(f"[ocr_annotations] {image_hash} 读坏文件，按空处理（将被修复）")
                 annotations = {}
 
-        if char:
-            annotations[str(idx)] = char
+        if simp:
+            # 详细记录对象
+            annotations[str(idx)] = {
+                'simp': simp,
+                'conf': round(float(conf), 3),
+                'source': source,
+                'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+            }
         else:
-            # char 为空 = 删除（用户接管了这张卡）
+            # simp 为空 = 删除（用户接管了这张卡）
             annotations.pop(str(idx), None)
 
         # 锁内直接写目标（同锁内串行，无并发重叠）

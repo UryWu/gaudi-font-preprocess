@@ -1,17 +1,4 @@
 """高迪书法字库预处理工具 - Flask主应用"""
-# === 必须在 import paddle 之前设环境变量 ===
-# PaddlePaddle 3.3.1 在 Windows CPU + onednn 路径上有 bug：
-# 处理 ~35 张图后稳定崩
-# (Unimplemented) ConvertPirAttribute2RuntimeAttribute not support
-# [pir::ArrayAttribute<pir::DoubleAttribute>]
-# 必须在 paddle import 前设 FLAGS_use_onednn=False（3.x 新 flag 名），
-# 否则 import 时 onednn 就被打开了，运行时关不掉
-import os as _os_for_paddle
-_os_for_paddle.environ.setdefault('FLAGS_use_mkldnn', 'False')
-_os_for_paddle.environ.setdefault('FLAGS_use_onednn', 'False')
-_os_for_paddle.environ.setdefault('PADDLE_DISABLE_ONEDNN', '1')
-del _os_for_paddle
-
 import os
 import sys
 import json
@@ -1717,17 +1704,17 @@ def ocr_start():
                         result = {'filename': fn, 'character': '', 'confidence': 0, 'error': '文件不存在'}
                     else:
                         try:
-                            char, conf, engine_used = recognize_character(fp)
+                            char, conf = recognize_character(fp)
                             result = {
                                 'filename': fn,
                                 'character': char,
                                 'confidence': round(conf, 3),
-                                'engine': engine_used,
+                                'engine': 'easyocr',
                                 'above_threshold': conf >= threshold and len(char) == 1,
                             }
                         except Exception as e:
                             print(f"[OCR {task_id}] {fn} 失败: {e}")
-                            result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e), 'engine': 'none'}
+                            result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e), 'engine': 'easyocr'}
 
                 # 写结果（持锁更新）
                 with _ocr_tasks_lock:
@@ -1746,10 +1733,8 @@ def ocr_start():
                 task['finished_at'] = time.time()
             elapsed = time.time() - task['started_at']
             recognized = sum(1 for r in task['results'] if r.get('character'))
-            paddle_used = sum(1 for r in task['results'] if r.get('engine') == 'paddleocr')
-            easy_used = sum(1 for r in task['results'] if r.get('engine') == 'easyocr')
             print(f"[OCR {task_id}] ✓ 任务完成: {recognized}/{len(filenames)} 识别成功, "
-                  f"paddleocr={paddle_used}, easyocr={easy_used}, {elapsed:.1f}s ({elapsed/len(filenames)*1000:.0f}ms/张)")
+                  f"{elapsed:.1f}s ({elapsed/len(filenames)*1000:.0f}ms/张, easyocr)")
         except Exception as e:
             print(f"[OCR {task_id}] 任务异常: {e}")
             import traceback

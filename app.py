@@ -2,6 +2,9 @@
 import os
 import sys
 import json
+import time
+import uuid
+import threading
 import cv2
 import numpy as np
 from flask import Flask, render_template, request, jsonify, redirect, url_for
@@ -1561,6 +1564,150 @@ def import_characters():
         'characters': characters,
         'output_dir': output_dir
     })
+
+
+# === OCR 自动标注（异步：后台线程 + 进度轮询）===
+# EasyOCR 在 CPU 上 ~1.5s/张，329 张 ≈ 8 分钟，sync 会让请求超时
+# 设计：start 启动后台线程 → 返回 task_id → 前端轮询 progress
+#       每次轮询返回增量 results（已填入数据库的），前端增量应用
+# 准确率参考：50 张样本里 34% 高置信 (>=0.5)，书法字 OCR 本身不可靠
+# 客户端默认只填入 >=0.5 置信度的结果，低置信度留给用户手动确认
+
+# 全局 task 存储：{task_id: {status, results, total, done, error}}
+# task 在 done/errored 后保留 10 分钟供前端最终拉取，然后清掉
+_ocr_tasks = {}
+_ocr_tasks_lock = threading.Lock()
+_OCR_TASK_TTL = 600  # 10 分钟
+
+
+def _ocr_task_cleanup():
+    """定期清理过期的 OCR task，避免内存泄漏"""
+    while True:
+        time.sleep(60)
+        cutoff = time.time() - _OCR_TASK_TTL
+        with _ocr_tasks_lock:
+            stale = [tid for tid, t in _ocr_tasks.items()
+                     if t.get('finished_at', 0) < cutoff]
+            for tid in stale:
+                _ocr_tasks.pop(tid, None)
+
+
+# 启动清理线程（daemon=True，主进程退出时自动结束）
+threading.Thread(target=_ocr_task_cleanup, daemon=True).start()
+
+
+@app.route('/api/ocr_start', methods=['POST'])
+def ocr_start():
+    """启动 OCR 批量识别任务（后台执行），返回 task_id
+
+    请求体: { hash, filenames: [...], use_scaled: bool, threshold: float }
+    响应: { success, task_id, total }
+    """
+    from utils.ocr_handler import recognize_character
+
+    data = request.get_json()
+    image_hash = data.get('hash')
+    filenames = data.get('filenames', [])
+    use_scaled = data.get('use_scaled', True)
+    threshold = float(data.get('threshold', 0.5))
+
+    if not image_hash or not filenames:
+        return jsonify({'success': False, 'error': '缺少参数'}), 400
+
+    task_id = uuid.uuid4().hex[:12]
+    with _ocr_tasks_lock:
+        _ocr_tasks[task_id] = {
+            'status': 'running',
+            'total': len(filenames),
+            'done': 0,
+            'results': [],       # 累积结果（每完成一张 append）
+            'new_results': [],   # 增量结果（上次轮询后新完成的），轮询后会清空
+            'error': None,
+            'finished_at': 0.0,
+            'started_at': time.time(),
+        }
+
+    def worker():
+        """后台 OCR 工作线程——每识别完一张就放入 new_results 供前端拉取"""
+        task = _ocr_tasks[task_id]
+        try:
+            for fn in filenames:
+                # 路径解析（与 /api/open_path 一致：先 OUTPUT_FOLDER/hash/，再 scaled/）
+                if not fn or '..' in fn or '/' in fn or '\\' in fn:
+                    result = {'filename': fn, 'character': '', 'confidence': 0, 'error': '非法文件名'}
+                else:
+                    if use_scaled:
+                        fp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled', fn)
+                        if not os.path.exists(fp):
+                            fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
+                    else:
+                        fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
+                    if not os.path.exists(fp):
+                        result = {'filename': fn, 'character': '', 'confidence': 0, 'error': '文件不存在'}
+                    else:
+                        try:
+                            char, conf = recognize_character(fp)
+                            result = {
+                                'filename': fn,
+                                'character': char,
+                                'confidence': round(conf, 3),
+                                'above_threshold': conf >= threshold and len(char) == 1,
+                            }
+                        except Exception as e:
+                            print(f"OCR {fn} 失败: {e}")
+                            result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e)}
+
+                # 写结果（持锁更新）
+                with _ocr_tasks_lock:
+                    task['results'].append(result)
+                    task['new_results'].append(result)
+                    task['done'] += 1
+            # 完成
+            with _ocr_tasks_lock:
+                task['status'] = 'done'
+                task['finished_at'] = time.time()
+            elapsed = time.time() - task['started_at']
+            print(f"OCR 任务完成: {task_id}, {len(filenames)} 张, {elapsed:.1f}s")
+        except Exception as e:
+            print(f"OCR 任务异常: {task_id}, {e}")
+            import traceback
+            traceback.print_exc()
+            with _ocr_tasks_lock:
+                task['status'] = 'error'
+                task['error'] = str(e)
+                task['finished_at'] = time.time()
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'total': len(filenames),
+    })
+
+
+@app.route('/api/ocr_progress/<task_id>', methods=['GET'])
+def ocr_progress(task_id):
+    """轮询 OCR 任务进度 + 增量结果
+
+    响应: { status, done, total, new_results, error }
+    - status: 'running' | 'done' | 'error' | 'not_found'
+    - new_results: 上次轮询后新完成的结果（前端拉取后会被清空）
+    """
+    with _ocr_tasks_lock:
+        task = _ocr_tasks.get(task_id)
+        if not task:
+            return jsonify({'status': 'not_found'})
+        # 取走 new_results（消费者模式）
+        new_results = task['new_results']
+        task['new_results'] = []
+        return jsonify({
+            'status': task['status'],
+            'done': task['done'],
+            'total': task['total'],
+            'new_results': new_results,
+            'error': task.get('error'),
+        })
 
 
 if __name__ == '__main__':

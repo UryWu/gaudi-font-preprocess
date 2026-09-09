@@ -158,6 +158,105 @@
     background-color: #A87070;
 }
 
+/* OCR 自动标注按钮：莫兰迪棕（与 btn-open 的 #D4C5A9 同色系但更深一档） */
+.btn-ocr {
+    background-color: #A89070;
+    color: white;
+}
+
+.btn-ocr:hover:not(:disabled) {
+    background-color: #968260;
+}
+
+.btn-ocr:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* OCR 阈值滑块 + 进度条 */
+.ocr-config {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: 1;
+    margin-left: 10px;
+    font-size: 12px;
+    color: #666;
+}
+
+.ocr-config label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ocr-config input[type="range"] {
+    width: 90px;
+    cursor: pointer;
+}
+
+.ocr-config #ocrThresholdValue {
+    color: #A89070;
+    font-weight: 600;
+    min-width: 32px;
+    text-align: right;
+}
+
+.ocr-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    max-width: 320px;
+}
+
+.ocr-progress-bar {
+    flex: 1;
+    height: 6px;
+    background-color: #e0e0e0;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.ocr-progress-fill {
+    height: 100%;
+    background-color: #A89070;
+    width: 0%;
+    transition: width 0.2s ease;
+}
+
+.ocr-progress-text {
+    font-size: 11px;
+    color: #888;
+    min-width: 90px;
+    text-align: right;
+}
+
+/* OCR 填入的卡片：左侧棕色色条 + 卡片底部置信度徽章 */
+.char-card.ocr-filled {
+    border-left: 4px solid #A89070;
+}
+
+.char-card .ocr-badge {
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: white;
+    z-index: 2;
+    font-weight: 600;
+}
+
+.char-card .ocr-badge.high {
+    background-color: #8BA888;  /* 莫兰迪绿：高置信 */
+}
+
+.char-card .ocr-badge.low {
+    background-color: #C4A484;  /* 莫兰迪棕：低置信（仍填了但用户需复查） */
+}
+
 /* 字符计数 */
 .char-count-info {
     margin-left: auto;
@@ -410,7 +509,19 @@
     <!-- 操作按钮 -->
     <div class="action-buttons">
         <button id="annotateBtn" class="action-btn btn-annotate" disabled>开始标注</button>
+        <button id="ocrAnnotateBtn" class="action-btn btn-ocr" disabled title="EasyOCR 自动识别 + 填入空字段">OCR 自动标注</button>
         <button id="clearBtn" class="action-btn btn-clear">清空</button>
+        <div class="ocr-config" id="ocrConfig" style="display: none;">
+            <label title="仅填入置信度 ≥ 此值的识别结果（书法 OCR 准确率低，建议 0.5+）">
+                阈值:
+                <input type="range" id="ocrThreshold" min="10" max="90" value="50" step="5">
+                <span id="ocrThresholdValue">0.50</span>
+            </label>
+            <div class="ocr-progress" id="ocrProgress" style="display: none;">
+                <div class="ocr-progress-bar"><div class="ocr-progress-fill" id="ocrProgressFill"></div></div>
+                <span class="ocr-progress-text" id="ocrProgressText">就绪</span>
+            </div>
+        </div>
         <div class="char-count-info">
             字符数: <span id="inputCount">0</span> / 卡片数: <span id="cardCount">0</span>
         </div>
@@ -429,5 +540,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=13"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=14"></script>
 {% endblock %}

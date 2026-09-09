@@ -30,7 +30,24 @@ const elements = {
     csvBtn: document.getElementById('csvBtn'),
     openDirBtn: document.getElementById('openDirBtn'),
     annotateBtn: document.getElementById('annotateBtn'),
+    ocrAnnotateBtn: document.getElementById('ocrAnnotateBtn'),
+    ocrConfig: document.getElementById('ocrConfig'),
+    ocrThreshold: document.getElementById('ocrThreshold'),
+    ocrThresholdValue: document.getElementById('ocrThresholdValue'),
+    ocrProgress: document.getElementById('ocrProgress'),
+    ocrProgressFill: document.getElementById('ocrProgressFill'),
+    ocrProgressText: document.getElementById('ocrProgressText'),
     clearBtn: document.getElementById('clearBtn')
+};
+
+// OCR 状态
+let ocrState = {
+    taskId: null,           // 当前后台 task_id
+    pollTimer: null,        // 轮询 timer
+    applied: 0,             // 已填入卡片数
+    highConf: 0,            // 高置信填入数
+    lowConf: 0,             // 低置信填入数
+    threshold: 0.5,         // 当前阈值
 };
 
 // 初始化
@@ -50,7 +67,15 @@ function setupEventListeners() {
 
     // 标注按钮
     elements.annotateBtn.addEventListener('click', startAnnotate);
+    elements.ocrAnnotateBtn.addEventListener('click', ocrAutoAnnotate);
     elements.clearBtn.addEventListener('click', clearInputs);
+
+    // OCR 阈值滑块：实时更新显示值
+    elements.ocrThreshold.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value, 10) / 100;
+        ocrState.threshold = v;
+        elements.ocrThresholdValue.textContent = v.toFixed(2);
+    });
 
     // 繁简切换
     elements.mixedMode.addEventListener('click', () => setMode('mixed'));
@@ -286,6 +311,12 @@ function updateUI() {
     elements.annotateBtn.disabled = activeCount === 0;
     elements.exportBtn.disabled = activeCount === 0;
     elements.csvBtn.disabled = activeCount === 0;
+    // OCR 按钮：有字符时启用（无 task 正在跑时）
+    elements.ocrAnnotateBtn.disabled = activeCount === 0 || !!ocrState.taskId;
+    // OCR 配置面板：只在有字符时显示
+    if (elements.ocrConfig) {
+        elements.ocrConfig.style.display = activeCount > 0 ? 'flex' : 'none';
+    }
 }
 
 // 渲染卡片
@@ -854,4 +885,164 @@ async function openOutputDirectory() {
     } catch (error) {
         showToast('打开目录失败: ' + error.message);
     }
+}
+
+// === OCR 自动标注 ===
+// 流程：点击按钮 → POST /api/ocr_start 启动后台 task →
+//      轮询 /api/ocr_progress/<id> 拿增量结果 → 逐个填入空字段
+// 设计原则：
+// - 只填入「简化字输入框为空」的卡片（不覆盖用户已标的）
+// - 置信度低于阈值的结果不填（用户可在滑块上调阈值）
+// - 填过的卡加 .ocr-filled class（左侧棕条）+ .ocr-badge 显示置信度
+// - 任务耗时 1.5s/张 × 329 张 ≈ 8min，必须用进度条
+
+async function ocrAutoAnnotate() {
+    if (ocrState.taskId) {
+        showToast('OCR 任务正在进行中');
+        return;
+    }
+
+    // 收集目标：未删除 + 有文件名
+    const targets = state.characters
+        .map((c, idx) => ({ char: c, idx, fn: c.processed_filename || c.filename }))
+        .filter(t => t.fn && !t.char.deleted);
+
+    if (targets.length === 0) {
+        showToast('没有可识别的字符');
+        return;
+    }
+
+    // 用 scaled 图（识别率更高）—— 如果有任何一个字符有 processed_filename，就用 scaled
+    const useScaled = state.characters.some(c => c.processed_filename);
+    const threshold = ocrState.threshold;
+
+    // 重置状态 + 启动进度条
+    ocrState.applied = 0;
+    ocrState.highConf = 0;
+    ocrState.lowConf = 0;
+    ocrState.taskId = null;
+
+    elements.ocrAnnotateBtn.disabled = true;
+    elements.ocrProgress.style.display = 'flex';
+    elements.ocrProgressFill.style.width = '0%';
+    elements.ocrProgressText.textContent = '启动 OCR 引擎…（首次约 15s）';
+
+    try {
+        const response = await fetch('/api/ocr_start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: state.imageHash,
+                filenames: targets.map(t => t.fn),
+                use_scaled: useScaled,
+                threshold: threshold,
+            })
+        });
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error);
+
+        ocrState.taskId = data.task_id;
+        showToast(`OCR 任务已启动，共 ${data.total} 张，约需 ${Math.round(data.total * 1.5 / 60)} 分钟`);
+
+        // 开始轮询
+        ocrState.pollTimer = setInterval(() => pollOcrProgress(targets, threshold), 2000);
+    } catch (err) {
+        showToast('OCR 启动失败: ' + err.message);
+        ocrReset();
+    }
+}
+
+// 轮询进度 + 增量应用结果
+async function pollOcrProgress(targets, threshold) {
+    if (!ocrState.taskId) return;
+
+    try {
+        const response = await fetch(`/api/ocr_progress/${ocrState.taskId}`);
+        const data = await response.json();
+
+        if (data.status === 'not_found') {
+            showToast('OCR 任务丢失（可能服务器重启）');
+            ocrReset();
+            return;
+        }
+
+        // 更新进度条
+        const percent = data.total > 0 ? (data.done / data.total * 100) : 0;
+        elements.ocrProgressFill.style.width = percent.toFixed(1) + '%';
+        elements.ocrProgressText.textContent = `${data.done}/${data.total} (${percent.toFixed(0)}%)`;
+
+        // 应用增量结果
+        for (const r of data.new_results) {
+            applyOcrResult(r, targets, threshold);
+        }
+
+        // 终态
+        if (data.status === 'done') {
+            clearInterval(ocrState.pollTimer);
+            ocrState.pollTimer = null;
+            const summary = `OCR 完成：识别 ${data.done} 张，填入 ${ocrState.applied}（高置信 ${ocrState.highConf} + 低置信 ${ocrState.lowConf}）`;
+            showToast(summary);
+            ocrReset();
+        } else if (data.status === 'error') {
+            clearInterval(ocrState.pollTimer);
+            ocrState.pollTimer = null;
+            showToast('OCR 任务失败: ' + (data.error || '未知错误'));
+            ocrReset();
+        }
+    } catch (err) {
+        console.warn('OCR 轮询失败:', err);
+        // 网络抖动：继续轮询，不立即终止
+    }
+}
+
+// 把单条 OCR 结果应用到对应卡片
+function applyOcrResult(result, targets, threshold) {
+    // 找到对应的卡
+    const target = targets.find(t => t.fn === result.filename);
+    if (!target) return;
+
+    const card = document.querySelector(`.char-card[data-index="${target.idx}"]`);
+    if (!card) return;
+
+    // 只填「简化字输入框为空」的（不覆盖用户已标）
+    const simpInput = card.querySelector('.simplified-input');
+    if (simpInput.value) return;  // 已有标注，跳过
+
+    if (!result.character || result.error) {
+        // OCR 没识别出来，不填
+        return;
+    }
+
+    // 应用：填入简化字 + 触发繁简转换 + UI 标记
+    simpInput.value = result.character;
+    card.querySelector('.simplified-utf').textContent = getUtfCode(result.character);
+    state.characters[target.idx].simplified = result.character;
+    card.classList.add('ocr-filled');
+
+    // 置信度徽章
+    const isHigh = result.confidence >= threshold;
+    const badge = document.createElement('div');
+    badge.className = 'ocr-badge ' + (isHigh ? 'high' : 'low');
+    badge.textContent = `${(result.confidence * 100).toFixed(0)}%`;
+    badge.title = `OCR 置信度 ${result.confidence}（阈值 ${threshold}）`;
+    card.appendChild(badge);
+
+    // 自动转繁体
+    convertSingleToTraditional(result.character, target.idx);
+
+    ocrState.applied++;
+    if (isHigh) ocrState.highConf++; else ocrState.lowConf++;
+}
+
+// 清理 OCR 状态（任务完成 / 失败 / 取消时）
+function ocrReset() {
+    ocrState.taskId = null;
+    if (ocrState.pollTimer) {
+        clearInterval(ocrState.pollTimer);
+        ocrState.pollTimer = null;
+    }
+    if (elements.ocrProgress) {
+        elements.ocrProgress.style.display = 'none';
+    }
+    updateUI();
 }

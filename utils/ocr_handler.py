@@ -32,14 +32,28 @@ def _get_paddle_ocr():
     global _paddle_ocr
     if _paddle_ocr is None:
         from paddleocr import PaddleOCR
-        # lang='ch'：中英双语模型；use_angle_cls=False 关闭方向分类（单字不需要）
-        # show_log=False 静音；use_gpu=False 走 CPU
-        _paddle_ocr = PaddleOCR(
+        # PaddleOCR 3.x API：
+        #   - lang='ch'：中英双语模型
+        #   - use_angle_cls=False：单字图不需要方向分类
+        #   - show_log=False：静音
+        #   - device='cpu'：环境无 CUDA 走 CPU
+        #   注：3.x 移除了旧版的 use_gpu，改用 device
+        kwargs = dict(
             use_angle_cls=False,
             lang='ch',
             show_log=False,
-            use_gpu=False,
+            device='cpu',
         )
+        # 3.0.0+ 才支持 device 参数；老版本不支持时降级
+        try:
+            _paddle_ocr = PaddleOCR(**kwargs)
+        except (TypeError, AssertionError) as e:
+            if 'device' in str(e) or 'use_gpu' in str(e):
+                # 移除 device 重试（兼容 < 3.0.0）
+                kwargs.pop('device', None)
+                _paddle_ocr = PaddleOCR(**kwargs)
+            else:
+                raise
     return _paddle_ocr
 
 

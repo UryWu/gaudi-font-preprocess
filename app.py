@@ -1916,14 +1916,22 @@ threading.Thread(target=_export_task_cleanup, daemon=True).start()
 
 @app.route('/api/export_csv', methods=['POST'])
 def export_csv():
-    """导出 FontLab CSV 格式"""
+    """导出 FontLab CSV 格式
+
+    每个字符样本一行。同字重复样本加 _01/_02 后缀区分，规则与 /api/export_annotated
+    的图片命名一致（README 承诺「重复字符自动加后缀区分」）。若漏了后缀，CSV 会出现
+    大量同名 uniXXXX.png——下游把 label 对到图片文件时，同一汉字的多个样本互相覆盖
+    （本次 bug：319 行只有 152 个唯一文件名，见版本历史 2026-09-09）。
+
+    注解带 filename（源切图 scaled_*.png / char_*.png）时，顺手写一份同时间戳的
+    <csv>.source_map.json：{源文件名: 导出文件名}，供下游把样本图与 label 对号入座。
+    """
     import csv
     from datetime import datetime
 
     data = request.get_json()
     image_hash = data.get('hash')
     annotations = data.get('annotations', [])
-    mode = data.get('mode', 'traditional')
 
     if not image_hash or not annotations:
         return jsonify({'error': '缺少参数'}), 400
@@ -1934,29 +1942,55 @@ def export_csv():
     csv_path = os.path.join(OUTPUT_FOLDER, image_hash, 'exported', csv_filename)
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
+    # 同行字计数（与 export_annotated 同一套：首样本无后缀，第二个起 _01、_02…）。
+    # 计数用字符串 char 做 key；名用其首个码点（python 单 str 直接含扩展区码点，无代理对问题）
+    char_counts = {}
+    source_map = {}
+    rows = []
+    for ann in annotations:
+        char = (ann.get('primary') or '').strip()
+        if not char:
+            continue
+        code = ord(char)
+        if char in char_counts:
+            char_counts[char] += 1
+            suffix = f"_{char_counts[char]:02d}"
+        else:
+            char_counts[char] = 0
+            suffix = ""
+        if code > 0xFFFF:
+            png_name = f"u{code:05X}{suffix}.png"
+        else:
+            png_name = f"uni{code:04X}{suffix}.png"
+        rows.append([
+            png_name,
+            f"U+{code:04X}" if code <= 0xFFFF else f"U+{code:05X}",
+            char,
+            ann.get('simplified', ''),
+            ann.get('traditional', '')
+        ])
+        # 源文件名 → 导出名 映射（仅当注解带着源文件名才记）
+        if ann.get('filename'):
+            source_map[ann['filename']] = png_name
+
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['filename', 'unicode', 'character', 'simplified', 'traditional'])
+        writer.writerows(rows)
 
-        for ann in annotations:
-            char = ann.get('primary', '')
-            if char:
-                code = ord(char)
-                if code > 0xFFFF:
-                    png_name = f"u{code:05X}.png"
-                else:
-                    png_name = f"uni{code:04X}.png"
-                writer.writerow([
-                    png_name,
-                    f"U+{code:04X}" if code <= 0xFFFF else f"U+{code:05X}",
-                    char,
-                    ann.get('simplified', ''),
-                    ann.get('traditional', '')
-                ])
+    # 源文件名 → 导出名 映射文件（非必需，下游要交叉验证才用得上）
+    mapping_path = None
+    if source_map:
+        mapping_filename = f"fontlab_{timestamp}.source_map.json"
+        mapping_path = os.path.join(OUTPUT_FOLDER, image_hash, 'exported', mapping_filename)
+        with open(mapping_path, 'w', encoding='utf-8') as mf:
+            json.dump(source_map, mf, ensure_ascii=False, indent=2)
 
     return jsonify({
         'success': True,
-        'output_path': csv_path
+        'output_path': csv_path,
+        'mapping_path': mapping_path,
+        'row_count': len(rows)
     })
 
 

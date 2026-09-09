@@ -127,7 +127,8 @@ async function loadCutResults() {
     state.imageHash = localStorage.getItem('currentImageHash');
 
     if (!state.imageHash) {
-        showEmptyState();
+        // localStorage 无 hash：直接尝试找一个有数据的会话
+        await fallbackToAnySession('localStorage 没有当前图片哈希');
         return;
     }
 
@@ -138,6 +139,9 @@ async function loadCutResults() {
         const data = await response.json();
 
         if (!data.success) {
+            // 当前 hash 失效（典型场景：localStorage 残留了已删图片的 hash，
+            // upload 文件已清掉 → API 返回 '图片不存在'）。
+            // 见 docs/数据存储说明.md → 会话与磁盘一致性
             throw new Error(data.error || '加载切割结果失败');
         }
 
@@ -165,7 +169,75 @@ async function loadCutResults() {
 
     } catch (error) {
         console.error('加载切割结果失败:', error);
-        showToast('加载切割结果失败: ' + error.message);
+        // 兜底：扫描所有会话，挑一个有数据的
+        await fallbackToAnySession(error.message);
+    }
+}
+
+/**
+ * 扫描所有会话，挑一个「有 chars + 有 coords + 有 output」的最佳会话
+ * （按 /api/list_sessions 的排序：档位 2 = 全套数据；同档按字符数降序）。
+ * 找到就更新 localStorage 并重新加载；找不到就显示空状态。
+ *
+ * 触发场景：
+ * - /adjust 直接打开 URL，localStorage 没 hash
+ * - localStorage 有 hash，但对应图片被「清空所有数据」删了
+ * - localStorage 有 hash，但该会话从未真正切割（只有空 characters 数组）
+ */
+async function fallbackToAnySession(reason) {
+    try {
+        const r = await fetch('/api/list_sessions');
+        const data = await r.json();
+        if (!data.success || !data.sessions || data.sessions.length === 0) {
+            showEmptyState();
+            return;
+        }
+        // /api/list_sessions 已按 (has_coords && output>0) 优先级排好序
+        // 第一个 output_count>0 的就是可用的
+        const best = data.sessions.find(s => s.output_count > 0);
+        if (!best) {
+            // 没有任何会话有 output 数据
+            showToast(`无可用数据：${reason}`);
+            showEmptyState();
+            return;
+        }
+        // 切换到最佳会话，更新 localStorage，重新加载
+        state.imageHash = best.hash;
+        localStorage.setItem('currentImageHash', best.hash);
+        showToast(`已切换到会话 ${best.hash.slice(0, 8)}（${best.char_count} 字符）`);
+        // 重新执行加载流程
+        await loadCutResultsWithHash(best.hash);
+    } catch (err) {
+        console.error('fallback 失败:', err);
+        showToast('加载失败: ' + reason);
+        showEmptyState();
+    }
+}
+
+/**
+ * 用指定 hash 加载切割结果（fallback 后用）。
+ * 与 loadCutResults 主体一致，只是 hash 来自参数而非 localStorage。
+ */
+async function loadCutResultsWithHash(imageHash) {
+    showLoadingState();
+    try {
+        const response = await fetch(`/api/get_cut_results/${imageHash}`);
+        const data = await response.json();
+        if (!data.success) {
+            showToast('加载失败: ' + (data.error || '未知错误'));
+            showEmptyState();
+            return;
+        }
+        if (!data.characters || data.characters.length === 0) {
+            showEmptyState();
+            return;
+        }
+        state.characters = data.characters;
+        renderCharacterGrid();
+        updateUI();
+    } catch (err) {
+        console.error('加载失败:', err);
+        showToast('加载失败: ' + err.message);
         showEmptyState();
     }
 }

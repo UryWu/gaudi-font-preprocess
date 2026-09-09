@@ -18,7 +18,7 @@ else:
 from utils.image_processor import load_image, to_binary, resize_to_height, compute_hash, save_image, get_image_info, deskew
 from utils.ocr_handler import detect_text_boxes
 from utils.cut_analyzer import analyze_cut_lines
-from utils.storage import save_session, load_session
+from utils.storage import save_session, load_session, list_sessions
 from utils.empty_detector import detect_empty_slice
 
 app = Flask(__name__,
@@ -357,6 +357,51 @@ def api_load_session(image_hash):
         return jsonify({'success': True, 'data': session_data})
     else:
         return jsonify({'success': False, 'error': '会话不存在'})
+
+
+@app.route('/api/list_sessions', methods=['GET'])
+def api_list_sessions():
+    """
+    列出所有有可用数据的会话。
+
+    返回每个会话的元信息：字符数、是否有有效坐标、是否有 output 目录。
+    前端在 /adjust 加载失败时用此端点寻找 fallback 哈希
+    （场景：localStorage 记了一个失效的 hash，原图被删，导致 '图片不存在'）。
+    """
+    sessions = list_sessions(DATA_FOLDER)
+    result = []
+    for h in sessions:
+        session_data = load_session(h, DATA_FOLDER)
+        if not session_data:
+            continue
+        chars = session_data.get('characters', [])
+        # 是否有有效坐标（x>0 或 y>0 的字符）
+        has_coords = any(c.get('x', 0) > 0 or c.get('y', 0) > 0 for c in chars)
+        # 是否已有 output 目录
+        out_dir = os.path.join(OUTPUT_FOLDER, h)
+        out_files = 0
+        if os.path.isdir(out_dir):
+            out_files = sum(1 for f in os.listdir(out_dir)
+                            if f.startswith('char_') and f.endswith('.png'))
+        # 原图是否还在
+        upload_path = os.path.join(UPLOAD_FOLDER, f"{h}.png")
+        has_upload = os.path.exists(upload_path)
+        result.append({
+            'hash': h,
+            'char_count': len(chars),
+            'has_coords': has_coords,
+            'output_count': out_files,
+            'has_upload': has_upload,
+        })
+    # 按可用性排序：有 coords + 有 output > 有 output > 其它；同档内按字符数降序
+    def score(s):
+        if s['has_coords'] and s['output_count'] > 0:
+            return (2, s['char_count'])
+        if s['output_count'] > 0:
+            return (1, s['char_count'])
+        return (0, s['char_count'])
+    result.sort(key=score, reverse=True)
+    return jsonify({'success': True, 'sessions': result})
 
 
 def _dedupe_contained(regions):

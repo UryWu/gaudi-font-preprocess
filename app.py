@@ -1631,13 +1631,86 @@ def import_characters():
 
 # 全局 task 存储：{task_id: {status, results, total, done, error}}
 # task 在 done/errored 后保留 10 分钟供前端最终拉取，然后清掉
+# 持久化：每个 task 同步存盘到 data/ocr_tasks/<id>.json，Flask 重启不丢
+#   - worker 每张图处理完写一次（300ms/图，磁盘写 <10ms，可接受）
+#   - 启动时扫描该目录，running 状态标为 interrupted（worker 线程死了，
+#     但已完成的结果都还在）
 _ocr_tasks = {}
 _ocr_tasks_lock = threading.Lock()
 _OCR_TASK_TTL = 600  # 10 分钟
+_OCR_TASK_DIR = os.path.join(DATA_FOLDER, 'ocr_tasks')
+os.makedirs(_OCR_TASK_DIR, exist_ok=True)
+
+
+def _save_ocr_task(task_id, task):
+    """把单个 task 状态写到磁盘（持锁拷贝字段，写盘在锁外避免阻塞读）"""
+    with _ocr_tasks_lock:
+        snapshot = {
+            'task_id': task_id,
+            'status': task['status'],
+            'total': task['total'],
+            'done': task['done'],
+            'results': list(task.get('results', [])),
+            'new_results': list(task.get('new_results', [])),
+            'error': task.get('error'),
+            'finished_at': task.get('finished_at', 0.0),
+            'started_at': task.get('started_at', 0.0),
+            'image_hash': task.get('image_hash', ''),
+            'use_scaled': task.get('use_scaled', True),
+            'threshold': task.get('threshold', 0.5),
+        }
+    path = os.path.join(_OCR_TASK_DIR, f'{task_id}.json')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(snapshot, f, ensure_ascii=False)
+
+
+def _load_ocr_tasks_on_startup():
+    """Flask 启动时从磁盘加载 task 到内存
+
+    关键处理：之前 status=running 的 task 说明 server 被杀时还在跑，
+    worker 线程已死，无法恢复处理。但已完成的结果都还在磁盘上。
+    这里把它标为 'interrupted'，前端 poll 时能看到部分结果 + 这个状态。
+    """
+    if not os.path.isdir(_OCR_TASK_DIR):
+        return
+    now = time.time()
+    loaded = 0
+    for fn in os.listdir(_OCR_TASK_DIR):
+        if not fn.endswith('.json'):
+            continue
+        path = os.path.join(_OCR_TASK_DIR, fn)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            task_id = data.get('task_id')
+            if not task_id:
+                continue
+            # 之前是 running → 标 interrupted
+            if data.get('status') == 'running':
+                data['status'] = 'interrupted'
+                data['error'] = '服务器中断，worker 线程已死，请重新开始'
+            # 过期清理
+            elif data.get('finished_at', 0) < now - _OCR_TASK_TTL:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                continue
+            with _ocr_tasks_lock:
+                _ocr_tasks[task_id] = data
+            loaded += 1
+        except Exception as e:
+            print(f"[OCR 启动] 加载 task {fn} 失败: {e}")
+    if loaded:
+        print(f"[OCR 启动] 从磁盘恢复 {loaded} 个 task")
+
+
+# 启动时立即加载
+_load_ocr_tasks_on_startup()
 
 
 def _ocr_task_cleanup():
-    """定期清理过期的 OCR task，避免内存泄漏"""
+    """定期清理过期的 OCR task（内存 + 磁盘），避免泄漏"""
     while True:
         time.sleep(60)
         cutoff = time.time() - _OCR_TASK_TTL
@@ -1646,6 +1719,12 @@ def _ocr_task_cleanup():
                      if t.get('finished_at', 0) < cutoff]
             for tid in stale:
                 _ocr_tasks.pop(tid, None)
+                # 同步删盘上文件
+                path = os.path.join(_OCR_TASK_DIR, f'{tid}.json')
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
 
 # 启动清理线程（daemon=True，主进程退出时自动结束）
@@ -1681,7 +1760,13 @@ def ocr_start():
             'error': None,
             'finished_at': 0.0,
             'started_at': time.time(),
+            # 持久化元数据（重启后这些字段不存，前端恢复时拿不到原参数）
+            'image_hash': image_hash,
+            'use_scaled': use_scaled,
+            'threshold': threshold,
         }
+    # 初始存盘（让 task_id 落盘，client poll 时一定能找到）
+    _save_ocr_task(task_id, _ocr_tasks[task_id])
 
     def worker():
         """后台 OCR 工作线程——每识别完一张就放入 new_results 供前端拉取"""
@@ -1721,6 +1806,9 @@ def ocr_start():
                     task['results'].append(result)
                     task['new_results'].append(result)
                     task['done'] += 1
+                # 每张图同步存盘（300ms/图，磁盘写 <10ms，可接受）
+                # 这样 Flask 重启也不丢已完成的结果，前端 poll 还能拿到
+                _save_ocr_task(task_id, task)
                 # 每张图打一行进度（控制台能实时看到）
                 elapsed_one = time.time() - t0
                 char_disp = result.get('character') or '(空)'
@@ -1731,6 +1819,7 @@ def ocr_start():
             with _ocr_tasks_lock:
                 task['status'] = 'done'
                 task['finished_at'] = time.time()
+            _save_ocr_task(task_id, task)  # 最终存盘
             elapsed = time.time() - task['started_at']
             recognized = sum(1 for r in task['results'] if r.get('character'))
             print(f"[OCR {task_id}] ✓ 任务完成: {recognized}/{len(filenames)} 识别成功, "
@@ -1743,6 +1832,7 @@ def ocr_start():
                 task['status'] = 'error'
                 task['error'] = str(e)
                 task['finished_at'] = time.time()
+            _save_ocr_task(task_id, task)  # 异常也存盘
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -1758,7 +1848,8 @@ def ocr_progress(task_id):
     """轮询 OCR 任务进度 + 增量结果
 
     响应: { status, done, total, new_results, error }
-    - status: 'running' | 'done' | 'error' | 'not_found'
+    - status: 'running' | 'done' | 'error' | 'interrupted' | 'not_found'
+      interrupted：服务器中断后启动时加载的旧 task（worker 死了但部分结果还在）
     - new_results: 上次轮询后新完成的结果（前端拉取后会被清空）
     """
     with _ocr_tasks_lock:

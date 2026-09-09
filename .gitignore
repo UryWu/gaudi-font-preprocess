@@ -2,6 +2,7 @@ __pycache__/
 .venv/
 .playwright-cli/
 data/sessions/
+data/ocr_tasks/
 input/
 output/
 static/uploads/

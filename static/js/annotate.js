@@ -1110,6 +1110,11 @@ async function pollOcrProgress(targets, threshold) {
             ocrReset();
             return;
         }
+        if (data.status === 'interrupted') {
+            // 服务端从磁盘恢复了部分结果（worker 线程死了但已存盘的结果还在）
+            // 继续让下面循环应用 new_results，然后提示用户重跑
+            showToast(`服务器中断，已恢复 ${data.done}/${data.total} 张结果（剩余可手动重跑 OCR）`);
+        }
 
         // 更新进度条
         const percent = data.total > 0 ? (data.done / data.total * 100) : 0;
@@ -1150,17 +1155,26 @@ async function pollOcrProgress(targets, threshold) {
 function applyOcrResult(result, targets, threshold) {
     // 找到对应的卡
     const target = targets.find(t => t.fn === result.filename);
-    if (!target) return;
+    if (!target) {
+        console.warn(`[OCR DEBUG] 跳过 ${result.filename}: targets 中找不到（可能 session-picker 切了）`);
+        return;
+    }
 
     const card = document.querySelector(`.char-card[data-index="${target.idx}"]`);
-    if (!card) return;
+    if (!card) {
+        console.warn(`[OCR DEBUG] 跳过 ${result.filename}: 找不到 idx=${target.idx} 的卡（DOM 里没？）`);
+        return;
+    }
 
     // 只填「简化字输入框为空」的（不覆盖用户已标）
     const simpInput = card.querySelector('.simplified-input');
-    if (simpInput.value) return;  // 已有标注，跳过
+    if (simpInput.value) {
+        console.log(`[OCR DEBUG] 跳过 ${result.filename}: 已被标过 ('${simpInput.value}')`);
+        return;
+    }
 
     if (!result.character || result.error) {
-        // OCR 没识别出来，不填
+        console.log(`[OCR DEBUG] 跳过 ${result.filename}: 识别失败/空 (engine=${result.engine}, conf=${result.confidence})`);
         return;
     }
 
@@ -1183,6 +1197,7 @@ function applyOcrResult(result, targets, threshold) {
 
     ocrState.applied++;
     if (isHigh) ocrState.highConf++; else ocrState.lowConf++;
+    console.log(`[OCR DEBUG] 填入 ${result.filename} → '${result.character}' (conf=${result.confidence}, ${result.engine}, idx=${target.idx})`);
 }
 
 // 清理 OCR 状态（任务完成 / 失败 / 取消时）

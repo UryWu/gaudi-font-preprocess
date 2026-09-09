@@ -1469,15 +1469,16 @@ async function pollOcrProgress(targets, threshold) {
             ocrState.pollTimer = null;
             const summary = `OCR 完成：识别 ${data.done} 张，填入 ${ocrState.applied}（高置信 ${ocrState.highConf} + 低置信 ${ocrState.lowConf}）`;
             showToast(summary);
-            // 兜底补齐（async，不阻塞 UI）：
-            //  1. loadOcrAnnotations(true)：拉全量，worker 直写但 poll 漏应用的空卡
-            //     补上；缺繁体的卡由 fillMissingTraditional 一次性批量转繁填框
-            //  2. saveAllTraditional()：把补好的繁体批量写回 ocr_annotations.json，
-            //     刷新不再重复转换
-            (async () => {
+            // 兜底补齐（延迟稍等服务端 backfill 落盘后再拉，async 不阻塞 UI）：
+            // worker 完成时序：先设 status=done → 再 backfill 繁体落盘。
+            // 这里延迟 ~600ms 等 backfill 写完，再 loadOcrAnnotations 拉全量：
+            //  1. 服务端已给每条记录填了 traditional → 直接填各卡繁体框（回填 UI）
+            //  2. 万一 backfill 未完成/漏了 → fillMissingTraditional 前端批量转繁填框
+            //  3. saveAllTraditional()：把补好的繁体批量写回 json（双保险）
+            setTimeout(async () => {
                 await loadOcrAnnotations(true);
                 await saveAllTraditional();
-            })();
+            }, 600);
             // 任务完成后给个提示，建议用户切换到「只看待复查」模式复查
             if (ocrState.applied > 0 && !ocrState.filterOnly) {
                 setTimeout(() => showToast('💡 提示：点上方「只看待复查」可只显示 OCR 填入的卡片'), 1500);

@@ -958,7 +958,17 @@ def save_adjustments():
 
 @app.route('/api/delete_characters', methods=['POST'])
 def delete_characters():
-    """批量删除指定字符：删除磁盘文件 + 从 session 中移除对应条目"""
+    """批量删除指定字符：删除磁盘文件 + 从 session 中移除对应条目
+
+    级联删除（本函数最容易漏的点）：一个「字符」在会话里有两份条目、两份文件——
+      characters        : filename=char_XXXX.png     → cutting_output/char_XXXX.png
+      scaled_characters : original_filename=char_XXXX, processed_filename=scaled_YYYY.png
+                                                 → scaled/scaled_YYYY.png
+    /adjust 删原始名（char_XXXX.png），/annotate 删缩放名（scaled_YYYY.png）。
+    无论从哪个入口删，原始 + 缩放两侧的文件与条目都要一起清掉，并同步删掉
+    ocr_annotations.json 里的对应标注。否则另一半会漏删——例如只删了 scaled
+    文件但 scaled_characters 条目还在，/annotate 刷新又把卡片加载回来（本次 bug）。
+    """
     data = request.get_json()
     image_hash = data.get('hash')
     filenames = data.get('filenames', [])
@@ -966,10 +976,34 @@ def delete_characters():
     if not image_hash or not filenames:
         return jsonify({'success': False, 'error': '缺少参数'}), 400
 
-    deleted = []
+    session_data = load_session(image_hash, DATA_FOLDER)
+
+    # 建 原始名 ↔ 缩放名 双向映射：scaled 条目记着 original_filename，据此倒查
+    # 同名映射只取第一个（正常一个原始字只对应一份缩放输出）
+    char_to_scaled = {}
+    scaled_to_char = {}
+    for sc in (session_data or {}).get('scaled_characters', []):
+        src = (sc.get('original_filename') or '').strip()
+        sp = (sc.get('processed_filename') or '').strip()
+        if sp:
+            scaled_to_char[sp] = src
+            if src:
+                char_to_scaled.setdefault(src, sp)
+
+    # 展开真正要删的文件集合 = 用户指定的 + 级联到的另一侧
+    files_to_delete = set()
     for fn in filenames:
         if not fn or '..' in fn or '/' in fn or '\\' in fn:  # 防路径穿越
             continue
+        files_to_delete.add(fn)
+        # 用户给缩放名 → 补删其原始切图；给原始名 → 补删它的缩放输出
+        if fn in scaled_to_char and scaled_to_char[fn]:
+            files_to_delete.add(scaled_to_char[fn])
+        if fn in char_to_scaled:
+            files_to_delete.add(char_to_scaled[fn])
+
+    deleted = []
+    for fn in files_to_delete:
         # 字符文件可能在 cutting_output/（char_*.png）或 scaled/（scaled_*.png）
         # 两个位置都试一次——前端只发文件名，路径由服务端解析
         fp = os.path.join(char_dir(image_hash), fn)
@@ -984,18 +1018,28 @@ def delete_characters():
             except Exception as e:
                 print(f"删除 {fn} 失败: {e}")
 
-    # 更新 session characters 字段：移除这些
-    session_data = load_session(image_hash, DATA_FOLDER)
-    if session_data and 'characters' in session_data:
-        deleted_set = set(deleted)
+    if session_data:
+        deleted_set = set(files_to_delete)
+        # 原始切图按 filename 匹配；缩放列表按 processed_filename（个别兜底 filename）
         session_data['characters'] = [
-            c for c in session_data['characters']
-            if c.get('filename') not in deleted_set
+            c for c in session_data.get('characters', [])
+            if (c.get('filename') or '') not in deleted_set
+        ]
+        session_data['scaled_characters'] = [
+            c for c in session_data.get('scaled_characters', [])
+            if (c.get('processed_filename') or c.get('filename') or '') not in deleted_set
         ]
         save_session(image_hash, session_data, DATA_FOLDER)
 
+        # 同步删 ocr_annotations.json 里指向这些文件的标注记录（键=文件名）。
+        # 不删的话，同名 scaled 若日后重新生成，旧标注会被 loadOcrAnnotations
+        # 误套到新图对应的旧字上。
+        _delete_ocr_annotations_by_keys(image_hash, files_to_delete)
+
     remaining = len(session_data.get('characters', [])) if session_data else 0
-    print(f"批量删除字符: hash={image_hash}, 删除 {len(deleted)} 个, 剩余 {remaining} 个")
+    scaled_remaining = len(session_data.get('scaled_characters', [])) if session_data else 0
+    print(f"批量删除字符: hash={image_hash}, 删 {len(deleted)} 个文件, "
+          f"characters 剩 {remaining}, scaled 剩 {scaled_remaining}")
 
     return jsonify({
         'success': True,
@@ -1301,6 +1345,35 @@ def _persist_one_ocr_annotation(image_hash, filename, simplified, conf=0.0, sour
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(annotations, f, ensure_ascii=False, indent=2)
     return True
+
+
+def _delete_ocr_annotations_by_keys(image_hash, keys):
+    """从 ocr_annotations.json 删除一组 key（删卡后清理该卡对应标注）。
+
+    keys 是文件名集合（char_*.png / scaled_*.png）。只删存在的 key，全空则
+    不写文件。并发安全策略同 _persist_one_ocr_annotation：进程内锁串行化
+    「读→改→写」后直接写目标文件（Windows 上 os.replace 覆盖被读方打开的
+    文件会 PermissionError，所以不用原子替换，见 save_ocr_annotation 的注释）。
+
+    注意：调用此函数时不另拿锁——本函数内部自己 with _ocr_annotations_lock。
+    """
+    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    with _ocr_annotations_lock:
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                annotations = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return  # 文件坏了就跳过清理，不让删卡接口因此失败
+        removed = 0
+        for k in keys:
+            if k in annotations:
+                del annotations[k]
+                removed += 1
+        if removed:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(annotations, f, ensure_ascii=False, indent=2)
 
 
 @app.route('/api/save_ocr_annotation/<image_hash>', methods=['POST'])

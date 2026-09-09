@@ -1709,12 +1709,12 @@ def ocr_start():
                                 'filename': fn,
                                 'character': char,
                                 'confidence': round(conf, 3),
-                                'engine': 'easyocr',
+                                'engine': 'rapidocr',
                                 'above_threshold': conf >= threshold and len(char) == 1,
                             }
                         except Exception as e:
                             print(f"[OCR {task_id}] {fn} 失败: {e}")
-                            result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e), 'engine': 'easyocr'}
+                            result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e), 'engine': 'rapidocr'}
 
                 # 写结果（持锁更新）
                 with _ocr_tasks_lock:
@@ -1734,7 +1734,7 @@ def ocr_start():
             elapsed = time.time() - task['started_at']
             recognized = sum(1 for r in task['results'] if r.get('character'))
             print(f"[OCR {task_id}] ✓ 任务完成: {recognized}/{len(filenames)} 识别成功, "
-                  f"{elapsed:.1f}s ({elapsed/len(filenames)*1000:.0f}ms/张, easyocr)")
+                  f"{elapsed:.1f}s ({elapsed/len(filenames)*1000:.0f}ms/张, rapidocr)")
         except Exception as e:
             print(f"[OCR {task_id}] 任务异常: {e}")
             import traceback

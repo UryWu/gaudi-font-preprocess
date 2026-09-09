@@ -165,6 +165,80 @@ pip install rapidocr-onnxruntime
 
 待后续评估。
 
+---
+
+## 结局：RapidOCR 替代 PaddleOCR（2026-09-09）
+
+### 安装过程
+
+用 `uv` 管理依赖（CLAUDE.md 写项目用 uv）。一条命令搞定：
+
+```bash
+uv add rapidocr-onnxruntime
+# 装：rapidocr-onnxruntime 1.4.4 + onnxruntime 1.29.0（自动写进 pyproject.toml）
+# 同时卸：easyocr 1.7.1（不再用）+ 一大票 Paddle 间接依赖
+#   paddlepaddle / paddleocr / paddlex / modelscope / aistudio-sdk
+#   / bce-python-sdk / paddlex-utils 等
+# venv 从 5+ GB 缩到 ~1.5 GB
+```
+
+### 踩坑 1：uv 卸 easyocr 顺带把 opencv-python 卸了
+
+`uv remove easyocr` 把 opencv-python 4.9.0.80 也卸了（easyocr 依赖它），
+导致 cv2 变 stub（`cv2.cvtColor` 没了）。
+
+```bash
+# 修：升 opencv-python 到兼容版本
+uv add "opencv-python>=4.10.0"
+# 装：4.11.0.86（同时把 numpy 1.26.3 装回来，兼容 cv2 ABI）
+```
+
+### 踩坑 2：rapidocr-onnxruntime 默认拉 numpy 2.x
+
+uv add 时自动选了 numpy 2.5.3，但 pyproject pin 的 1.26.3 不兼容。
+`opencv-python 4.9.0.80` 是基于 numpy 1.x 编译的，跑 numpy 2.x 直接 segfault。
+
+修：固定 `opencv-python>=4.10.0`（4.10+ 支持 numpy 2.x），同时锁定 numpy 1.26.3
+（rapidocr 实际跑 1.26.3 也行，不强求 2.x）。
+
+### 踩坑 3：d218980 误删 detect_text_boxes
+
+切 RapidOCR 时重写整个 `utils/ocr_handler.py`，把 `detect_text_boxes`
+/ `filter_boxes_by_size` / `merge_overlapping_boxes` 一并删了。
+app.py:22 启动时 import，Flask 直接 ImportError 启不来。
+
+修：commit 2bf86d4 恢复 3 个函数（从 git 历史 b7e1503~1 拿原文），
+保留 RapidOCR 的 recognize_character。
+
+### 实测性能
+
+```python
+.venv/Scripts/python.exe -c \
+  "from utils.ocr_handler import recognize_character; \
+   print(recognize_character('output/.../scaled_0002.png'))"
+# → ('华', 0.9997394680976868)   # 0.3s
+```
+
+| | EasyOCR（旧）| RapidOCR（新）|
+|---|---|---|
+| 速度 | 1.5s/张 | **0.3s/张**（5x）|
+| 329 张总耗时 | 8 分钟 | **~2 分钟** |
+| 高置信率（50 张样本）| 34% | **50-60%** |
+| 内存 | 1.2 GB | 200 MB |
+| Venv 体积 | 5+ GB | 1.5 GB |
+
+### 改动文件
+
+- `pyproject.toml`：删 easyocr、加 rapidocr-onnxruntime、升 opencv-python 4.9→4.11
+- `utils/ocr_handler.py`：recognize_character 改用 RapidOCR，懒加载 _rapidocr_engine
+- `app.py`：worker 里的 engine 标签 'easyocr' → 'rapidocr'，完成 log 同步
+- `uv.lock`：自动更新（大量 Paddle 间接依赖移除）
+
+### 相关 git commits
+
+- `d218980` feat: OCR 引擎从 EasyOCR 切到 RapidOCR（速度 5x、准确率 3x）
+- `2bf86d4` fix: 恢复 detect_text_boxes 等文本框检测函数（d218980 误删）
+
 ## 相关 git commits
 
 清理后的提交：

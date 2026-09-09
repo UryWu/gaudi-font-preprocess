@@ -62,6 +62,11 @@ let ocrState = {
     filterOnly: false,      // 「只看待复查」是否激活
 };
 
+// OCR 标注缓存：filename → 记录对象（页面加载 + OCR 完成时全量拉取填充）。
+// 用于「滚动懒加载图片」时同步补该卡标注：<img loading="lazy"> 只在滚到
+// 视口才发图片请求，图片 onload 时查此缓存即可把标注填进 input。
+let ocrAnnCache = {};
+
 // 搜索状态
 let searchState = {
     query: '',              // 当前搜索词
@@ -350,77 +355,82 @@ async function loadCharacters() {
 
 // 从服务器拉之前保存的 OCR 标注，预填到对应卡的 input
 // 值可能是：旧格式字符串 "华"（兼容），或新对象 {simp, conf, source, updated_at}
-async function loadOcrAnnotations() {
+// 把一条存储记录应用到单张卡（页面加载 / OCR 兜底 / 图片懒加载 onload 共用）。
+// card: .char-card 元素；index: state.characters 下标；rec: 服务端记录（对象或旧字符串）
+// 返回 true=本次填了，false=跳过（卡已手动填 / 无记录 / 找不到卡）。
+function applyStoredAnnotationToCard(card, index, rec) {
+    const simpInput = card.querySelector('.simplified-input');
+    if (!simpInput) return false;
+    const simplified = typeof rec === 'string' ? rec : (rec.simplified || '');
+    const traditional = typeof rec === 'object' ? (rec.traditional || '') : '';
+    const conf = typeof rec === 'object' ? (rec.conf || 0) : 0;
+    if (!simplified) return false;
+    // 卡已手动填过（值非空且非 OCR）就跳过——OCR 标注不该覆盖用户输入
+    if (simpInput.value && !card.classList.contains('ocr-filled')) return false;
+    // 预填 + 标 OCR 标记
+    simpInput.value = simplified;
+    const simpUtf = card.querySelector('.simplified-utf');
+    if (simpUtf) simpUtf.textContent = getUtfCode(simplified);
+    card.classList.add('ocr-filled');
+    state.characters[index].simplified = simplified;
+    // 恢复置信度徽章（与 OCR 跑完时同款样式）
+    if (conf > 0 && !card.querySelector('.ocr-badge')) {
+        const badge = document.createElement('div');
+        badge.className = 'ocr-badge ' + (conf >= 0.5 ? 'high' : 'low');
+        badge.textContent = `${Math.round(conf * 100)}%`;
+        badge.title = `OCR 置信度 ${conf}`;
+        card.appendChild(badge);
+    }
+    // 繁体：存过就直接填（不再调转换接口）；没存过才 fallback 转换一次
+    if (traditional) {
+        const tradInput = card.querySelector('.traditional-input');
+        if (tradInput) tradInput.value = traditional;
+        const tradUtf = card.querySelector('.traditional-utf');
+        if (tradUtf) tradUtf.textContent = getUtfCode(traditional);
+        state.characters[index].traditional = traditional;
+    } else {
+        convertSingleToTraditional(simplified, index);
+    }
+    return true;
+}
+
+// 从服务器拉全部 OCR 标注到 ocrAnnCache，并应用到对应卡。
+// skipToast=true 时（OCR 完成后的兜底调用）不弹提示。
+async function loadOcrAnnotations(skipToast) {
     try {
         const r = await fetch(`/api/get_ocr_annotations/${state.imageHash}`);
         const data = await r.json();
         if (!data.success || !data.annotations) return;
-        const annotations = data.annotations;  // { "scaled_0002.png": {simplified, conf, ...}, ... }
+        ocrAnnCache = data.annotations;  // filename → 记录（含 old 字符串格式）
         // 建 filename → 卡下标 映射
         // session 里 char 字段可能是 char_NNNN.png（原始切割）或
         // scaled_NNNN.png（缩放后）。OCR 标注存的 key 也是其中之一。
         // 索引时同时认两种 fn，确保任意一种都能对得上。
         const fnToIdx = {};
         state.characters.forEach((c, i) => {
-            // 后端可能给 processed_filename 或 filename，OCR 标注也可能存其中之一
             for (const fn of [c.processed_filename, c.filename]) {
                 if (fn) fnToIdx[fn] = i;
             }
-            // 若文件名带 scaled_ 前缀（如 scaled_0002.png），也兼容对应 char_0002.png
             if (c.processed_filename && c.processed_filename.startsWith('scaled_')) {
-                const charEq = c.processed_filename.replace(/^scaled_/, 'char_');
-                fnToIdx[charEq] = i;
+                fnToIdx[c.processed_filename.replace(/^scaled_/, 'char_')] = i;
             }
             if (c.filename && c.filename.startsWith('char_')) {
-                const scaledEq = c.filename.replace(/^char_/, 'scaled_');
-                fnToIdx[scaledEq] = i;
+                fnToIdx[c.filename.replace(/^char_/, 'scaled_')] = i;
             }
         });
         let count = 0;
-        for (const [filename, rec] of Object.entries(annotations)) {
+        for (const [filename, rec] of Object.entries(ocrAnnCache)) {
             if (!rec) continue;
             const idx = fnToIdx[filename];
             if (idx === undefined) continue;   // 记录对应卡不在当前列表（删除/改名），跳过
-            const simplified = typeof rec === 'string' ? rec : (rec.simplified || '');
-            const traditional = typeof rec === 'object' ? (rec.traditional || '') : '';
-            const conf = typeof rec === 'object' ? (rec.conf || 0) : 0;
-            if (!simplified) continue;
             const card = document.querySelector(`.char-card[data-index="${idx}"]`);
             if (!card) continue;
-            const simpInput = card.querySelector('.simplified-input');
-            if (!simpInput) continue;
-            // 卡已手动填过（值非空且非 OCR）就跳过——OCR 标注不该覆盖用户输入
-            if (simpInput.value && !card.classList.contains('ocr-filled')) continue;
-            // 预填 + 标 OCR 标记
-            simpInput.value = simplified;
-            const simpUtf = card.querySelector('.simplified-utf');
-            if (simpUtf) simpUtf.textContent = getUtfCode(simplified);
-            card.classList.add('ocr-filled');
-            state.characters[idx].simplified = simplified;
-            // 恢复置信度徽章（与 OCR 跑完时同款样式）
-            if (conf > 0 && !card.querySelector('.ocr-badge')) {
-                const badge = document.createElement('div');
-                badge.className = 'ocr-badge ' + (conf >= 0.5 ? 'high' : 'low');
-                badge.textContent = `${Math.round(conf * 100)}%`;
-                badge.title = `OCR 置信度 ${conf}`;
-                card.appendChild(badge);
-            }
-            // 繁体：存过就直接填（不再调转换接口）；没存过才 fallback 转换一次
-            if (traditional) {
-                const tradInput = card.querySelector('.traditional-input');
-                if (tradInput) tradInput.value = traditional;
-                const tradUtf = card.querySelector('.traditional-utf');
-                if (tradUtf) tradUtf.textContent = getUtfCode(traditional);
-                state.characters[idx].traditional = traditional;
-            } else {
-                convertSingleToTraditional(simplified, idx);
-            }
-            count++;
+            if (applyStoredAnnotationToCard(card, idx, rec)) count++;
         }
-        if (count > 0) {
+        if (count > 0 && !skipToast) {
             showToast(`已恢复 ${count} 张 OCR 标注（来自上次保存）`);
-            updateOcrFilterButton();
         }
+        updateOcrFilterButton();
     } catch (err) {
         console.warn('加载 OCR 标注失败:', err);
     }
@@ -640,6 +650,22 @@ function createCharCard(char, index) {
     // 这张卡的稳定标识：scaled_0002.png（缩放后）或 char_0000.png（原始切割）
     // ocr_annotations.json 的 key 用这个 filename，不随卡排序变化
     const cardFilename = char.processed_filename || char.filename;
+
+    // 懒加载同步补标注：<img loading="lazy"> 滚到视口才发图片请求。
+    // 图片加载完成时，若这张卡还没标上（可能 OCR 是后台 worker 直写盘、
+    // 前端 poll 漏应用），从 ocrAnnCache 里补填。这样滚动加载图片时
+    // 标注随之出现，不用等下次刷新。
+    const cardImg = card.querySelector('img');
+    if (cardImg) {
+        cardImg.addEventListener('load', () => {
+            const rec = ocrAnnCache[cardFilename];
+            if (!rec) return;                       // 无该卡记录（未识别/空白），跳过
+            if (card.classList.contains('ocr-filled')) return;  // 已填，无需再补
+            if (simpInput.value) return;            // 已有手动值，不覆盖
+            applyStoredAnnotationToCard(card, index, rec);
+            updateOcrFilterButton();
+        });
+    }
 
     simpInput.addEventListener('input', (e) => {
         // 用户手动编辑这张卡 → 解除「OCR 填的」状态 + 删掉已存标注
@@ -1335,6 +1361,10 @@ async function pollOcrProgress(targets, threshold) {
             ocrState.pollTimer = null;
             const summary = `OCR 完成：识别 ${data.done} 张，填入 ${ocrState.applied}（高置信 ${ocrState.highConf} + 低置信 ${ocrState.lowConf}）`;
             showToast(summary);
+            // 兜底补齐：worker 后端直写盘的结果，若前端 poll 漏应用（中途刷新/切页
+            // 回来）会躺在 ocr_annotations.json 里。任务 done 后再拉一次全量，
+            // 把那些空卡补上，滚动时图片加载即有标注。
+            loadOcrAnnotations(true);
             // 任务完成后给个提示，建议用户切换到「只看待复查」模式复查
             if (ocrState.applied > 0 && !ocrState.filterOnly) {
                 setTimeout(() => showToast('💡 提示：点上方「只看待复查」可只显示 OCR 填入的卡片'), 1500);
@@ -1410,6 +1440,14 @@ function applyOcrResult(result, targets, threshold) {
             conf: result.confidence,
             source: result.engine || 'ocr'
         });
+        // 同步更新本地缓存：OCR 进行中滚到视口外卡的懒加载图 onload 时，
+        // 若该卡 poll 漏应用，也能从 cache 补填
+        ocrAnnCache[target.fn] = {
+            simplified: result.character,
+            traditional: trad || '',
+            conf: result.confidence,
+            source: result.engine || 'ocr'
+        };
     });
 }
 

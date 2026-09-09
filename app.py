@@ -1454,6 +1454,47 @@ def bulk_fill_traditional(image_hash):
     return jsonify({'success': True, 'updated': updated})
 
 
+def _backfill_ocr_traditional(image_hash, results):
+    """OCR 任务完成后，给本任务识别出的记录批量补繁体并落盘。
+
+    服务端自主执行，不依赖前端 poll/页面是否开着。OpenCC 用模块级缓存的
+    _S2T_CONVERTER（毫秒级）。这样无论用户前端是哪个版本、是否刷新，
+    ocr_annotations.json 里的记录都会带上 traditional，之后读 json 直接显示。
+
+    results: task['results']（每项含 filename/character/confidence）。
+    只补「缺 traditional 且 simplified 非空」的记录，不动已有传统（用户可能已手动标）。
+    """
+    if not results or _S2T_CONVERTER is None:
+        return 0
+    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    updated = 0
+    with _ocr_annotations_lock:
+        annotations = {}
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    annotations = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                annotations = {}
+        for r in results:
+            fn = r.get('filename')
+            if not fn:
+                continue
+            existing = annotations.get(fn)
+            if isinstance(existing, dict) and existing.get('simplified') and not existing.get('traditional'):
+                try:
+                    existing['traditional'] = _S2T_CONVERTER.convert(existing['simplified'])
+                    updated += 1
+                except Exception:
+                    continue
+        if updated:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(annotations, f, ensure_ascii=False, indent=2)
+    if updated:
+        print(f"[OCR backfill] {image_hash}: 批量补 {updated} 条繁体（服务端）")
+    return updated
+
+
 @app.route('/api/get_ocr_annotations/<image_hash>', methods=['GET'])
 def get_ocr_annotations(image_hash):
     """获取这个 session 的所有 OCR 标注
@@ -2152,6 +2193,12 @@ def ocr_start():
                 task['status'] = 'done'
                 task['finished_at'] = time.time()
             _save_ocr_task(task_id, task)  # 最终存盘
+            # 服务端自主补繁体：任务结束时对识别出的记录批量简转繁并落盘，
+            # 不依赖前端。之后刷新页面读 ocr_annotations.json 即带 traditional。
+            try:
+                _backfill_ocr_traditional(image_hash, task.get('results', []))
+            except Exception as _bf_err:
+                print(f"[OCR {task_id}] 补繁体失败（忽略）: {_bf_err}")
             elapsed = time.time() - task['started_at']
             recognized = sum(1 for r in task['results'] if r.get('character'))
             print(f"[OCR {task_id}] ✓ 任务完成: {recognized}/{len(filenames)} 识别成功, "

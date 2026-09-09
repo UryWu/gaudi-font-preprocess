@@ -1864,7 +1864,13 @@ def _ocr_task_dir(image_hash: str) -> str:
 
 
 def _save_ocr_task(task_id, task):
-    """把单个 task 状态写到磁盘（持锁拷贝字段，写盘在锁外避免阻塞读）"""
+    """把单个 task 状态写到磁盘（持锁拷贝字段，写盘在锁外避免阻塞读）
+
+    task 文件只是「进度快照 + 断点」，真正的标注已由 worker 实时写进
+    ocr_annotations.json。所以这里写失败不能中断 worker——打印警告跳过
+    即可（下一次完成还会重写）。Windows 上偶发 PermissionError（文件
+    短暂被读方/另一实例占住），重试几次能跳过绝大多数。
+    """
     image_hash = task.get('image_hash', '')
     if not image_hash:
         return  # 没有 image_hash 没法定位目录
@@ -1884,9 +1890,24 @@ def _save_ocr_task(task_id, task):
             'threshold': task.get('threshold', 0.5),
         }
     path = os.path.join(_ocr_task_dir(image_hash), f'{task_id}.json')
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(snapshot, f, ensure_ascii=False)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # 短重试：Windows 偶发共享冲突，等 50ms 再试
+        for attempt in range(3):
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(snapshot, f, ensure_ascii=False)
+                return True
+            except PermissionError:
+                if attempt < 2:
+                    time.sleep(0.05)
+                else:
+                    raise
+    except OSError as e:
+        # 快照写失败不致命（标注已实时落盘），记录即可，勿中断 worker
+        print(f"[ocr_task] 快照写盘失败（忽略，不影响已保存的标注）: {e}")
+        return False
+    return True
 
 
 def _load_ocr_tasks_on_startup():
@@ -2044,13 +2065,17 @@ def ocr_start():
                 # 后端直接持久化到 ocr_annotations.json（不依赖前端轮询回填）
                 # 关键：即使前端刷新/关页停止 poll，识别结果也已落盘，刷新页面
                 # 时 loadOcrAnnotations 能直接恢复。只有识别出字符才写（空白跳过）。
+                # 持久化失败不中断识别主流程——前端 applyOcrResult 还有 POST 兜底。
                 if result.get('character'):
-                    with _ocr_annotations_lock:
-                        _persist_one_ocr_annotation(
-                            image_hash, fn, result['character'],
-                            conf=result.get('confidence', 0),
-                            source=result.get('engine', 'ocr'),
-                        )
+                    try:
+                        with _ocr_annotations_lock:
+                            _persist_one_ocr_annotation(
+                                image_hash, fn, result['character'],
+                                conf=result.get('confidence', 0),
+                                source=result.get('engine', 'ocr'),
+                            )
+                    except OSError as _e:
+                        print(f"[OCR {task_id}] 标注写盘失败（忽略，前端会兜底）: {_e}")
 
                 # 写结果（持锁更新）
                 with _ocr_tasks_lock:

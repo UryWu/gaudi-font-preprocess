@@ -46,6 +46,48 @@ def _get_paddle_ocr():
         for name in ('ppocr', 'paddleocr', 'paddlex'):
             logging.getLogger(name).setLevel(logging.WARNING)
 
+        # 绕过 paddlex[ocr-core] 的 opencv-contrib-python==4.10.0.84 强制依赖。
+        # 原因：仓库已装 opencv-python 4.10.x（cv2 模块），opencv-contrib-python
+        # 会试图覆盖 cv2.pyd（Windows 上被 Flask 锁住），导致 pip install 失败。
+        # opencv-contrib-python = opencv-python + contrib（SIFT 等高级模块），
+        # PaddleOCR 实际只用 cv2 基础 API，pyclipper 才是文本检测的真正依赖
+        # （已经装了）。所以可以安全地把 opencv-contrib-python 标记为「已满足」。
+        try:
+            import cv2  # noqa
+            import sys
+            import paddlex.utils.deps as _pdx_deps
+
+            # 1) 把 opencv-contrib-python 检查改成「opencv-python 装了就算」
+            for extra_name in ('ocr-core',):
+                if extra_name in _pdx_deps.EXTRAS:
+                    for pkg_name, deps in list(_pdx_deps.EXTRAS[extra_name].items()):
+                        if 'opencv-contrib-python' in pkg_name:
+                            deps[:] = ['opencv-python']
+            _orig_is_dep_available = _pdx_deps.is_dep_available
+            def _patched_is_dep_available(dep):
+                if 'opencv-contrib-python' in dep:
+                    return True
+                return _orig_is_dep_available(dep)
+            _pdx_deps.is_dep_available = _patched_is_dep_available
+
+            # 2) 全局批量注入 cv2：paddlex 在多个子模块里直接用 `cv2.XXX` 但不 import，
+            # 假设 opencv-contrib-python 的 sitecustomize 已经把 cv2 加到各模块 globals。
+            # 我们扫描 sys.modules 里所有 paddlex / paddleocr / paddle 命名空间的模块，
+            # 把 cv2 塞到它们的 globals 里。
+            for mod_name in list(sys.modules.keys()):
+                if any(mod_name.startswith(prefix) for prefix in
+                       ('paddlex.', 'paddleocr.', 'paddle.')):
+                    mod = sys.modules[mod_name]
+                    if mod and not getattr(mod, '__cv2_injected', False):
+                        try:
+                            if 'cv2' not in mod.__dict__:
+                                mod.cv2 = cv2
+                            mod.__cv2_injected = True
+                        except (AttributeError, TypeError):
+                            pass
+        except Exception as e:
+            print(f"[OCR] 绕过 opencv-contrib-python 依赖检查失败: {e}")
+
         # 渐进降级：先 3.x 完整参数 → 失败则逐个去掉
         attempt_kwargs = [
             # 3.0+ 完整：device 参数
@@ -156,10 +198,11 @@ def _engine_available(name: str) -> bool:
 def _recognize_paddle(image_path: str) -> Tuple[str, float]:
     """PaddleOCR 识别单张字符图。
 
-    PaddleOCR 2.x 的 ocr() 返回 [[(bbox, (text, conf)), ...]]（单图）
-    text/conf 是二元组不是单独值。"""
+    PaddleOCR 3.x 的 ocr() 不再接受 cls 参数（方向分类用 use_textline_orientation）。
+    返回 [[(bbox, (text, conf)), ...]]（单图）。"""
     ocr = _get_paddle_ocr()
-    result = ocr.ocr(image_path, cls=False)
+    # 3.x：use_textline_orientation=False 关闭方向分类（单字图不需要）
+    result = ocr.ocr(image_path, use_textline_orientation=False)
     if not result or not result[0]:
         return '', 0.0
     # result = [[(bbox, (text, conf)), ...]]

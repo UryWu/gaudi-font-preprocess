@@ -353,12 +353,12 @@ async function loadCharacters() {
     }
 }
 
-// 从服务器拉之前保存的 OCR 标注，预填到对应卡的 input
-// 值可能是：旧格式字符串 "华"（兼容），或新对象 {simp, conf, source, updated_at}
 // 把一条存储记录应用到单张卡（页面加载 / OCR 兜底 / 图片懒加载 onload 共用）。
 // card: .char-card 元素；index: state.characters 下标；rec: 服务端记录（对象或旧字符串）
+// missingOut: 可选数组。记录没存繁体时，若传入此数组 → 把 {card, index, simplified}
+//   收集进去（由调用方批量转繁，避免逐张发接口）；不传 → 单卡直接逐张转（onload 场景）
 // 返回 true=本次填了，false=跳过（卡已手动填 / 无记录 / 找不到卡）。
-function applyStoredAnnotationToCard(card, index, rec) {
+function applyStoredAnnotationToCard(card, index, rec, missingOut) {
     const simpInput = card.querySelector('.simplified-input');
     if (!simpInput) return false;
     const simplified = typeof rec === 'string' ? rec : (rec.simplified || '');
@@ -381,20 +381,65 @@ function applyStoredAnnotationToCard(card, index, rec) {
         badge.title = `OCR 置信度 ${conf}`;
         card.appendChild(badge);
     }
-    // 繁体：存过就直接填（不再调转换接口）；没存过才 fallback 转换一次
+    // 繁体：存过就直接填（不再调转换接口）
     if (traditional) {
         const tradInput = card.querySelector('.traditional-input');
         if (tradInput) tradInput.value = traditional;
         const tradUtf = card.querySelector('.traditional-utf');
         if (tradUtf) tradUtf.textContent = getUtfCode(traditional);
         state.characters[index].traditional = traditional;
+    } else if (missingOut && Array.isArray(missingOut)) {
+        // 没存繁体：交给调用方批量收集，稍后一次接口全部转换
+        missingOut.push({ card, index, simplified });
     } else {
+        // 单卡场景（onload 等）没给 missingOut → 直接逐张转换
         convertSingleToTraditional(simplified, index);
     }
     return true;
 }
 
+// 批量给缺繁体的卡补繁体：把所有简体拼成一串，一次调 /api/convert_to_traditional，
+// 返回结果按位置分发填到各卡繁体框。避免每张卡各发一次接口。
+async function fillMissingTraditional(missingList) {
+    if (!missingList || missingList.length === 0) return;
+    const simps = missingList.map(m => m.simplified);
+    const text = simps.join('');
+    try {
+        const resp = await fetch('/api/convert_to_traditional', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        const data = await resp.json();
+        if (!data.success || !data.result) {
+            console.warn('批量简转繁失败，逐张 fallback');
+            for (const m of missingList) convertSingleToTraditional(m.simplified, m.index);
+            return;
+        }
+        const resultChars = Array.from(data.result);   // 支持 CJK 代理对
+        if (resultChars.length !== simps.length) {
+            console.warn('批量转繁长度不匹配，逐张 fallback');
+            for (const m of missingList) convertSingleToTraditional(m.simplified, m.index);
+            return;
+        }
+        missingList.forEach((m, i) => {
+            const trad = resultChars[i];
+            if (!trad) return;
+            const tradInput = m.card.querySelector('.traditional-input');
+            if (tradInput) tradInput.value = trad;
+            const tradUtf = m.card.querySelector('.traditional-utf');
+            if (tradUtf) tradUtf.textContent = getUtfCode(trad);
+            state.characters[m.index].traditional = trad;
+        });
+    } catch (err) {
+        console.warn('批量简转繁失败:', err);
+        for (const m of missingList) convertSingleToTraditional(m.simplified, m.index);
+    }
+}
+
 // 从服务器拉全部 OCR 标注到 ocrAnnCache，并应用到对应卡。
+// 流程：先恢复所有已存的 simplified/traditional；然后对「繁体为空」的卡
+// 收集起来一次性批量转繁（只发一次接口），而不是每张卡各调一次。
 // skipToast=true 时（OCR 完成后的兜底调用）不弹提示。
 async function loadOcrAnnotations(skipToast) {
     try {
@@ -418,6 +463,8 @@ async function loadOcrAnnotations(skipToast) {
                 fnToIdx[c.filename.replace(/^char_/, 'scaled_')] = i;
             }
         });
+        // 先恢复标注；繁体为空的卡收集起来，稍后一次批量转换
+        const missingTrad = [];
         let count = 0;
         for (const [filename, rec] of Object.entries(ocrAnnCache)) {
             if (!rec) continue;
@@ -425,7 +472,11 @@ async function loadOcrAnnotations(skipToast) {
             if (idx === undefined) continue;   // 记录对应卡不在当前列表（删除/改名），跳过
             const card = document.querySelector(`.char-card[data-index="${idx}"]`);
             if (!card) continue;
-            if (applyStoredAnnotationToCard(card, idx, rec)) count++;
+            if (applyStoredAnnotationToCard(card, idx, rec, missingTrad)) count++;
+        }
+        // 已加载所有标注；对缺繁体的卡一次性补繁体（只在确实缺时发一次接口）
+        if (missingTrad.length > 0) {
+            await fillMissingTraditional(missingTrad);
         }
         if (count > 0 && !skipToast) {
             showToast(`已恢复 ${count} 张 OCR 标注（来自上次保存）`);

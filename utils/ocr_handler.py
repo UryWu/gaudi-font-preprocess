@@ -38,6 +38,16 @@ def _get_paddle_ocr():
     """
     global _paddle_ocr
     if _paddle_ocr is None:
+        # === 关 onednn：PaddlePaddle 3.3.1 在 Windows CPU 上有 bug
+        # ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]
+        # 处理 ~35 张图后会稳定崩，必须关掉。代价是文本检测稍慢，但不会崩。
+        try:
+            import paddle
+            paddle.set_flags({'FLAGS_use_mkldnn': False})
+            print("[OCR] 已关 Paddle onednn（绕过 3.3.1 Windows bug）")
+        except Exception as e:
+            print(f"[OCR] 关 onednn 失败（不影响启动）: {e}")
+
         from paddleocr import PaddleOCR
         import logging
 

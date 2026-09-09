@@ -1235,6 +1235,55 @@ def save_scaled():
 _ocr_annotations_lock = threading.Lock()
 
 
+def _persist_one_ocr_annotation(image_hash, filename, simplified, conf=0.0, source='ocr',
+                                now=None, keep_manual=True):
+    """写/删单条标注到 ocr_annotations.json（调用方须已持有 _ocr_annotations_lock）。
+
+    供三处共用，保证写入逻辑唯一：
+      - /api/save_ocr_annotation（前端 OCR 填卡实时写）
+      - OCR worker（后端每张识别完直接写，不依赖前端轮询回填）
+      - import_ocr_tasks 之外的手动导入
+    - simplified 非空 → 写入记录对象
+    - simplified 为空 → 删除该 filename
+    - keep_manual=True 时，若已有 source='manual' 的记录则跳过（保护人工标注）
+
+    注意：此函数不自己拿锁——由调用方在 with _ocr_annotations_lock 内调用，
+    因为批量场景（bulk_save）需要把多次更新合并到一次读改写里。
+    """
+    from datetime import datetime
+    if not filename:
+        return False
+    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    annotations = {}
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                annotations = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            annotations = {}
+
+    simplified = (simplified or '').strip()
+    if not simplified:
+        # 空 = 删除该卡标注
+        annotations.pop(filename, None)
+    else:
+        existing = annotations.get(filename)
+        # 保护已有人工标注（manual 标记）的卡——除非显式覆盖（keep_manual=False）
+        if keep_manual and isinstance(existing, dict) and existing.get('source') == 'manual':
+            return False
+        annotations[filename] = {
+            'simplified': simplified,
+            'conf': round(float(conf), 3),
+            'source': source,
+            'updated_at': now or datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+        }
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(annotations, f, ensure_ascii=False, indent=2)
+    return True
+
+
 @app.route('/api/save_ocr_annotation/<image_hash>', methods=['POST'])
 def save_ocr_annotation(image_hash):
     """保存/删除单条 OCR 标注（持久化到 data/sessions/<hash>/ocr_annotations.json）
@@ -1257,7 +1306,6 @@ def save_ocr_annotation(image_hash):
     不用 os.replace 原子替换：Windows 上 replace 覆盖「被读方打开的」
     文件会抛 PermissionError，反而不稳。
     """
-    from datetime import datetime
     data = request.get_json() or {}
     filename = data.get('filename') or ''
     # 兼容旧字段名 char/simp（万一老前端还在发）
@@ -1268,34 +1316,9 @@ def save_ocr_annotation(image_hash):
     if not filename:
         return jsonify({'success': False, 'error': '缺少 filename'}), 400
 
-    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    # 前端 OCR 填卡时实时写。source='ocr'，不覆盖已有 manual 标注
     with _ocr_annotations_lock:
-        # 读（容错：上次写坏/为空就当空 dict，不崩）
-        annotations = {}
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    annotations = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                print(f"[ocr_annotations] {image_hash} 读坏文件，按空处理（将被修复）")
-                annotations = {}
-
-        if simplified:
-            # 详细记录对象
-            annotations[filename] = {
-                'simplified': simplified,
-                'conf': round(float(conf), 3),
-                'source': source,
-                'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
-            }
-        else:
-            # simplified 为空 = 删除（用户接管了这张卡）
-            annotations.pop(filename, None)
-
-        # 锁内直接写目标（同锁内串行，无并发重叠）
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(annotations, f, ensure_ascii=False, indent=2)
+        _persist_one_ocr_annotation(image_hash, filename, simplified, conf, source)
     return jsonify({'success': True})
 
 
@@ -2017,6 +2040,17 @@ def ocr_start():
                         except Exception as e:
                             print(f"[OCR {task_id}] {fn} 失败: {e}")
                             result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e), 'engine': 'rapidocr'}
+
+                # 后端直接持久化到 ocr_annotations.json（不依赖前端轮询回填）
+                # 关键：即使前端刷新/关页停止 poll，识别结果也已落盘，刷新页面
+                # 时 loadOcrAnnotations 能直接恢复。只有识别出字符才写（空白跳过）。
+                if result.get('character'):
+                    with _ocr_annotations_lock:
+                        _persist_one_ocr_annotation(
+                            image_hash, fn, result['character'],
+                            conf=result.get('confidence', 0),
+                            source=result.get('engine', 'ocr'),
+                        )
 
                 # 写结果（持锁更新）
                 with _ocr_tasks_lock:

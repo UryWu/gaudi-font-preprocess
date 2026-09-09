@@ -46,4 +46,10 @@ Write-Host '========================================'
 Write-Host ''
 
 & $VenvPython 'app.py'
-Read-Host '按 Enter 退出'
+
+# 服务停止后窗口自动关闭（无需再按 Enter）。
+# 启动失败（uv 缺失 / 依赖安装失败）仍会停留等用户看完错误后按键。
+Write-Host ''
+Write-Host '[结束] Web 服务已停止，窗口即将自动关闭...' -ForegroundColor DarkGray
+Start-Sleep -Seconds 3
+exit 0

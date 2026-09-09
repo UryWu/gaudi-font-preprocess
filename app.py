@@ -1230,6 +1230,11 @@ def save_scaled():
     })
 
 
+# 进程内锁：OCR 每张卡都会 POST save，多个请求并发「读→改→写」同一 json，
+# 无锁会让一方读到另一方写半截的文件 → JSONDecodeError。串行化 + 原子写解决。
+_ocr_annotations_lock = threading.Lock()
+
+
 @app.route('/api/save_ocr_annotation/<image_hash>', methods=['POST'])
 def save_ocr_annotation(image_hash):
     """保存/删除单条 OCR 标注（持久化到 data/sessions/<hash>/ocr_annotations.json）
@@ -1239,6 +1244,13 @@ def save_ocr_annotation(image_hash):
     - char 非空：写入 ocr_annotations.json[idx] = char（覆盖旧值）
     - char 为空：删除该条 —— 用户手动改了 OCR 结果的卡不应再被恢复
     - 与 cutting.json 分开存：OCR 标注是用户数据，cutting 是几何/算法状态
+
+    并发安全：OCR 每填一张卡就 POST 一次，且前端轮询一次会连续 POST 多条。
+    若直接读-改-写，请求 A 读到请求 B 写到一半的文件 → json.load 崩。
+    方案：进程内锁串行化「读→改→写」——锁保证同进程内绝无并发重叠，
+    所以直接写目标文件即可（读方永远在锁外等，不会看到半截文件）。
+    不用 os.replace 原子替换：Windows 上 replace 覆盖「被读方打开的」
+    文件会抛 PermissionError，反而不稳。
     """
     data = request.get_json() or {}
     idx = data.get('idx')
@@ -1248,21 +1260,27 @@ def save_ocr_annotation(image_hash):
         return jsonify({'success': False, 'error': '缺少 idx'}), 400
 
     path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            annotations = json.load(f)
-    else:
+    with _ocr_annotations_lock:
+        # 读（容错：上次写坏/为空就当空 dict，不崩）
         annotations = {}
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    annotations = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                print(f"[ocr_annotations] {image_hash} 读坏文件，按空处理（将被修复）")
+                annotations = {}
 
-    if char:
-        annotations[str(idx)] = char
-    else:
-        # char 为空 = 删除（用户接管了这张卡）
-        annotations.pop(str(idx), None)
+        if char:
+            annotations[str(idx)] = char
+        else:
+            # char 为空 = 删除（用户接管了这张卡）
+            annotations.pop(str(idx), None)
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(annotations, f, ensure_ascii=False, indent=2)
+        # 锁内直接写目标（同锁内串行，无并发重叠）
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(annotations, f, ensure_ascii=False, indent=2)
     return jsonify({'success': True})
 
 
@@ -1273,15 +1291,16 @@ def get_ocr_annotations(image_hash):
     响应: { success, annotations: {idx_str: char} }
     """
     path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
-    if not os.path.exists(path):
-        return jsonify({'success': True, 'annotations': {}})
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            annotations = json.load(f)
-        return jsonify({'success': True, 'annotations': annotations})
-    except Exception as e:
-        print(f"[get_ocr_annotations] {image_hash} 读失败: {e}")
-        return jsonify({'success': True, 'annotations': {}})
+    with _ocr_annotations_lock:
+        if not os.path.exists(path):
+            return jsonify({'success': True, 'annotations': {}})
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                annotations = json.load(f)
+            return jsonify({'success': True, 'annotations': annotations})
+        except Exception as e:
+            print(f"[get_ocr_annotations] {image_hash} 读失败: {e}")
+            return jsonify({'success': True, 'annotations': {}})
 
 
 @app.route('/api/cleanup_intermediate', methods=['POST'])
@@ -1835,13 +1854,16 @@ def _ocr_task_cleanup():
             stale = [tid for tid, t in _ocr_tasks.items()
                      if t.get('finished_at', 0) < cutoff]
             for tid in stale:
-                _ocr_tasks.pop(tid, None)
-                # 同步删盘上文件
-                path = os.path.join(_OCR_TASK_DIR, f'{tid}.json')
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+                task = _ocr_tasks.pop(tid, None)
+                # 同步删盘上文件（task 存于 data/sessions/<hash>/ocr_tasks/<id>.json）
+                if task:
+                    img_hash = task.get('image_hash', '')
+                    if img_hash:
+                        path = os.path.join(_ocr_task_dir(img_hash), f'{tid}.json')
+                        try:
+                            os.remove(path)
+                        except OSError:
+                            pass
 
 
 # 启动清理线程（daemon=True，主进程退出时自动结束）

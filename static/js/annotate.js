@@ -336,10 +336,58 @@ async function loadCharacters() {
         renderCards();
         updateUI();
 
+        // 加载之前保存的 OCR 标注并预填 input（持久化）
+        // 流程：拉 server 的 ocr_annotations.json，对每张卡填 value + 加 .ocr-filled
+        await loadOcrAnnotations();
+
     } catch (error) {
         console.error('加载字符数据失败:', error);
         showEmptyState();
     }
+}
+
+// 从服务器拉之前保存的 OCR 标注，预填到对应卡的 input
+async function loadOcrAnnotations() {
+    try {
+        const r = await fetch(`/api/get_ocr_annotations/${state.imageHash}`);
+        const data = await r.json();
+        if (!data.success || !data.annotations) return;
+        const annotations = data.annotations;  // {"0": "华", "1": "时", ...}
+        let count = 0;
+        for (const [idx, char] of Object.entries(annotations)) {
+            if (!char) continue;
+            const card = document.querySelector(`.char-card[data-index="${idx}"]`);
+            if (!card) continue;
+            const simpInput = card.querySelector('.simplified-input');
+            if (!simpInput) continue;
+            // 已被标过（开始标注或上次 OCR）就跳过，不覆盖
+            if (simpInput.value) continue;
+            // 预填 + 标 OCR 标记 + 自动转繁
+            simpInput.value = char;
+            const simpUtf = card.querySelector('.simplified-utf');
+            if (simpUtf) simpUtf.textContent = getUtfCode(char);
+            card.classList.add('ocr-filled');
+            state.characters[parseInt(idx, 10)].simplified = char;
+            convertSingleToTraditional(char, parseInt(idx, 10));
+            count++;
+        }
+        if (count > 0) {
+            showToast(`已恢复 ${count} 张 OCR 标注（来自上次保存）`);
+            updateOcrFilterButton();
+        }
+    } catch (err) {
+        console.warn('加载 OCR 标注失败:', err);
+    }
+}
+
+// 保存一条 OCR 标注到服务器（fire-and-forget）
+function saveOcrAnnotation(idx, char) {
+    if (!state.imageHash || !char) return;
+    fetch(`/api/save_ocr_annotation/${state.imageHash}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idx, char })
+    }).catch(err => console.warn('保存 OCR 标注失败:', err));
 }
 
 // 传统书法顺序：从上到下，从右到左
@@ -753,6 +801,9 @@ function clearInputs() {
     elements.inputCount.textContent = 0;
 
     // 清空所有卡片的标注
+    // 注意：OCR 填过的卡带 .ocr-filled 类（棕色色条 + 置信度徽章），
+    // value 清掉后 class 留着会造成「有 class 但 value 空」的脏状态。
+    // 这里一并清掉，让「清空」是真的完全清空。
     const cards = document.querySelectorAll('.char-card');
     cards.forEach((card, index) => {
         const simpInput = card.querySelector('.simplified-input');
@@ -764,12 +815,24 @@ function clearInputs() {
         tradInput.value = '';
         simpUtf.textContent = '';
         tradUtf.textContent = '';
+        // 删 OCR 填入标记（棕色色条 + 置信度徽章）
+        card.classList.remove('ocr-filled');
+        // 删 .filter-hidden（清空同时清掉搜索/OCR-only 过滤）
+        card.classList.remove('filter-hidden');
 
         if (state.characters[index]) {
             state.characters[index].simplified = '';
             state.characters[index].traditional = '';
         }
     });
+
+    // 清空搜索框 + 「只看待复查」filter
+    if (elements.cardSearchInput) elements.cardSearchInput.value = '';
+    searchState.query = '';
+    searchState.filterActive = false;
+    ocrState.filterOnly = false;
+    elements.ocrFilterBtn.classList.remove('active');
+    if (elements.ocrFilterCount) elements.ocrFilterCount.textContent = '0';
 
     showToast('已清空');
 }
@@ -1166,10 +1229,13 @@ function applyOcrResult(result, targets, threshold) {
         return;
     }
 
-    // 只填「简化字输入框为空」的（不覆盖用户已标）
+    // 只填「用户标过」的卡（不覆盖）。但允许覆盖旧的 OCR 结果
+    // 判断方法：value 非空 且 没有 .ocr-filled class → 用户手标的
+    // 没 value → 空卡，可填
+    // 有 .ocr-filled → 之前是 OCR 填的，可重填（重跑 OCR 会覆盖）
     const simpInput = card.querySelector('.simplified-input');
-    if (simpInput.value) {
-        console.log(`[OCR DEBUG] 跳过 ${result.filename}: 已被标过 ('${simpInput.value}')`);
+    if (simpInput.value && !card.classList.contains('ocr-filled')) {
+        console.log(`[OCR DEBUG] 跳过 ${result.filename}: 已被用户标过 ('${simpInput.value}')`);
         return;
     }
 
@@ -1198,6 +1264,10 @@ function applyOcrResult(result, targets, threshold) {
     ocrState.applied++;
     if (isHigh) ocrState.highConf++; else ocrState.lowConf++;
     console.log(`[OCR DEBUG] 填入 ${result.filename} → '${result.character}' (conf=${result.confidence}, ${result.engine}, idx=${target.idx})`);
+
+    // 持久化到服务器（fire-and-forget，不阻塞 UI）
+    // 失败也不影响前端——下次加载拿旧值（如果有的话）
+    saveOcrAnnotation(target.idx, result.character);
 }
 
 // 清理 OCR 状态（任务完成 / 失败 / 取消时）

@@ -1202,6 +1202,58 @@ def save_scaled():
     })
 
 
+@app.route('/api/save_ocr_annotation/<image_hash>', methods=['POST'])
+def save_ocr_annotation(image_hash):
+    """保存单条 OCR 标注（持久化到 data/sessions/<hash>/ocr_annotations.json）
+
+    请求体: { idx: int, char: str }
+    行为:
+    - char 非空：写入 ocr_annotations.json[idx] = char（覆盖旧值）
+    - char 为空：不删旧的（用户想清就让他手动清）
+    - 与 cutting.json 分开存：OCR 标注是用户数据，cutting 是几何/算法状态
+    """
+    data = request.get_json()
+    idx = data.get('idx')
+    char = data.get('char', '')
+
+    if idx is None:
+        return jsonify({'success': False, 'error': '缺少 idx'}), 400
+
+    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            annotations = json.load(f)
+    else:
+        annotations = {}
+
+    if not char:
+        return jsonify({'success': True, 'note': 'char 为空，未保存'})
+
+    annotations[str(idx)] = char
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(annotations, f, ensure_ascii=False, indent=2)
+    return jsonify({'success': True})
+
+
+@app.route('/api/get_ocr_annotations/<image_hash>', methods=['GET'])
+def get_ocr_annotations(image_hash):
+    """获取这个 session 的所有 OCR 标注
+
+    响应: { success, annotations: {idx_str: char} }
+    """
+    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    if not os.path.exists(path):
+        return jsonify({'success': True, 'annotations': {}})
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            annotations = json.load(f)
+        return jsonify({'success': True, 'annotations': annotations})
+    except Exception as e:
+        print(f"[get_ocr_annotations] {image_hash} 读失败: {e}")
+        return jsonify({'success': True, 'annotations': {}})
+
+
 @app.route('/api/cleanup_intermediate', methods=['POST'])
 def cleanup_intermediate():
     """清理中间过程文件，只保留最终导出目录"""
@@ -1631,19 +1683,25 @@ def import_characters():
 
 # 全局 task 存储：{task_id: {status, results, total, done, error}}
 # task 在 done/errored 后保留 10 分钟供前端最终拉取，然后清掉
-# 持久化：每个 task 同步存盘到 data/ocr_tasks/<id>.json，Flask 重启不丢
+# 持久化：每个 task 同步存盘到 data/sessions/<hash>/ocr_tasks/<id>.json，Flask 重启不丢
 #   - worker 每张图处理完写一次（300ms/图，磁盘写 <10ms，可接受）
-#   - 启动时扫描该目录，running 状态标为 interrupted（worker 线程死了，
-#     但已完成的结果都还在）
+#   - 启动时扫描所有 session 目录的 ocr_tasks/，running 状态标为 interrupted
+#     （worker 线程死了，但已完成的结果都还在）
 _ocr_tasks = {}
 _ocr_tasks_lock = threading.Lock()
 _OCR_TASK_TTL = 600  # 10 分钟
-_OCR_TASK_DIR = os.path.join(DATA_FOLDER, 'ocr_tasks')
-os.makedirs(_OCR_TASK_DIR, exist_ok=True)
+
+
+def _ocr_task_dir(image_hash: str) -> str:
+    """单个 session 的 OCR task 目录"""
+    return os.path.join(DATA_FOLDER, image_hash, 'ocr_tasks')
 
 
 def _save_ocr_task(task_id, task):
     """把单个 task 状态写到磁盘（持锁拷贝字段，写盘在锁外避免阻塞读）"""
+    image_hash = task.get('image_hash', '')
+    if not image_hash:
+        return  # 没有 image_hash 没法定位目录
     with _ocr_tasks_lock:
         snapshot = {
             'task_id': task_id,
@@ -1655,52 +1713,61 @@ def _save_ocr_task(task_id, task):
             'error': task.get('error'),
             'finished_at': task.get('finished_at', 0.0),
             'started_at': task.get('started_at', 0.0),
-            'image_hash': task.get('image_hash', ''),
+            'image_hash': image_hash,
             'use_scaled': task.get('use_scaled', True),
             'threshold': task.get('threshold', 0.5),
         }
-    path = os.path.join(_OCR_TASK_DIR, f'{task_id}.json')
+    path = os.path.join(_ocr_task_dir(image_hash), f'{task_id}.json')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(snapshot, f, ensure_ascii=False)
 
 
 def _load_ocr_tasks_on_startup():
-    """Flask 启动时从磁盘加载 task 到内存
+    """Flask 启动时从磁盘加载所有 task 到内存
 
     关键处理：之前 status=running 的 task 说明 server 被杀时还在跑，
     worker 线程已死，无法恢复处理。但已完成的结果都还在磁盘上。
     这里把它标为 'interrupted'，前端 poll 时能看到部分结果 + 这个状态。
     """
-    if not os.path.isdir(_OCR_TASK_DIR):
+    if not os.path.isdir(DATA_FOLDER):
         return
     now = time.time()
     loaded = 0
-    for fn in os.listdir(_OCR_TASK_DIR):
-        if not fn.endswith('.json'):
+    # 扫描每个 session 目录的 ocr_tasks/
+    for session_dir_name in os.listdir(DATA_FOLDER):
+        session_path = os.path.join(DATA_FOLDER, session_dir_name)
+        if not os.path.isdir(session_path):
             continue
-        path = os.path.join(_OCR_TASK_DIR, fn)
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            task_id = data.get('task_id')
-            if not task_id:
+        ocr_dir = os.path.join(session_path, 'ocr_tasks')
+        if not os.path.isdir(ocr_dir):
+            continue
+        for fn in os.listdir(ocr_dir):
+            if not fn.endswith('.json'):
                 continue
-            # 之前是 running → 标 interrupted
-            if data.get('status') == 'running':
-                data['status'] = 'interrupted'
-                data['error'] = '服务器中断，worker 线程已死，请重新开始'
-            # 过期清理
-            elif data.get('finished_at', 0) < now - _OCR_TASK_TTL:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-                continue
-            with _ocr_tasks_lock:
-                _ocr_tasks[task_id] = data
-            loaded += 1
-        except Exception as e:
-            print(f"[OCR 启动] 加载 task {fn} 失败: {e}")
+            path = os.path.join(ocr_dir, fn)
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                task_id = data.get('task_id')
+                if not task_id:
+                    continue
+                # 之前是 running → 标 interrupted
+                if data.get('status') == 'running':
+                    data['status'] = 'interrupted'
+                    data['error'] = '服务器中断，worker 线程已死，请重新开始'
+                # 过期清理
+                elif data.get('finished_at', 0) < now - _OCR_TASK_TTL:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    continue
+                with _ocr_tasks_lock:
+                    _ocr_tasks[task_id] = data
+                loaded += 1
+            except Exception as e:
+                print(f"[OCR 启动] 加载 task {fn} 失败: {e}")
     if loaded:
         print(f"[OCR 启动] 从磁盘恢复 {loaded} 个 task")
 

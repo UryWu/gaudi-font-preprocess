@@ -12,9 +12,12 @@ else:
 
 # 路径配置（运行时数据在 BASE_DIR，资源文件在 RESOURCE_DIR）
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static', 'uploads')
-OUTPUT_FOLDER = os.path.join(BASE_DIR, 'output')
 INPUT_FOLDER = os.path.join(BASE_DIR, 'input')
 DATA_FOLDER = os.path.join(BASE_DIR, 'data', 'sessions')
+
+# 所有 session 数据（图片、切割线、OCR 标注、OCR 任务）合并到 DATA_FOLDER/<hash>/
+# OUTPUT_FOLDER 保留为别名以兼容老代码（指向同一目录）
+OUTPUT_FOLDER = DATA_FOLDER
 
 # 图像处理配置
 TARGET_HEIGHT = 4096  # 目标高度

@@ -1,4 +1,17 @@
 """高迪书法字库预处理工具 - Flask主应用"""
+# === 必须在 import paddle 之前设环境变量 ===
+# PaddlePaddle 3.3.1 在 Windows CPU + onednn 路径上有 bug：
+# 处理 ~35 张图后稳定崩
+# (Unimplemented) ConvertPirAttribute2RuntimeAttribute not support
+# [pir::ArrayAttribute<pir::DoubleAttribute>]
+# 必须在 paddle import 前设 FLAGS_use_onednn=False（3.x 新 flag 名），
+# 否则 import 时 onednn 就被打开了，运行时关不掉
+import os as _os_for_paddle
+_os_for_paddle.environ.setdefault('FLAGS_use_mkldnn', 'False')
+_os_for_paddle.environ.setdefault('FLAGS_use_onednn', 'False')
+_os_for_paddle.environ.setdefault('PADDLE_DISABLE_ONEDNN', '1')
+del _os_for_paddle
+
 import os
 import sys
 import json

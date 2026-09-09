@@ -1362,7 +1362,11 @@ def convert_to_simplified():
 
 @app.route('/api/export_annotated', methods=['POST'])
 def export_annotated():
-    """导出标注后的图片（白底黑字，UTF-8命名）"""
+    """启动异步导出任务，返回 task_id
+
+    329 张反色+保存可能要 5-10s，sync 会让请求挂死。改成后台线程 +
+    进度轮询（与 /api/ocr_start 模式一致）。客户端轮询 /api/export_progress/<id>。
+    """
     from datetime import datetime
 
     data = request.get_json()
@@ -1370,104 +1374,156 @@ def export_annotated():
     annotations = data.get('annotations', [])
     mode = data.get('mode', 'traditional')
 
-    print(f"导出请求: hash={image_hash}, annotations数量={len(annotations)}, mode={mode}")
-
     if not image_hash:
         return jsonify({'success': False, 'error': '缺少图片哈希'}), 400
-
     if not annotations:
         return jsonify({'success': False, 'error': '没有标注数据，请先标注字符'}), 400
 
-    # 创建带时间戳的输出目录
+    # 创建带时间戳的输出目录（同步，确保客户端拿到 task_id 时目录已存在）
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     export_dir = os.path.join(OUTPUT_FOLDER, image_hash, 'exported', timestamp)
     os.makedirs(export_dir, exist_ok=True)
-    print(f"导出目录: {export_dir}")
 
-    count = 0
-    errors = []
+    task_id = uuid.uuid4().hex[:12]
+    with _export_tasks_lock:
+        _export_tasks[task_id] = {
+            'status': 'running',
+            'total': len(annotations),
+            'done': 0,
+            'count': 0,           # 成功导出数
+            'errors': [],        # 错误列表
+            'output_dir': export_dir,
+            'new_errors': [],    # 增量错误（轮询取走后清空）
+            'error': None,
+            'finished_at': 0.0,
+            'started_at': time.time(),
+        }
 
-    # 用于跟踪重复字符
-    char_counts = {}
-
-    for ann in annotations:
+    def worker():
+        task = _export_tasks[task_id]
+        char_counts = {}
         try:
-            # 源文件路径 - 尝试多个可能的位置
-            src_path = None
-
-            # 1. 尝试原始文件名
-            if ann.get('filename'):
-                src_path = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
-                if not os.path.exists(src_path):
+            for ann in annotations:
+                err = None
+                try:
+                    # 1. 尝试原始文件名
                     src_path = None
+                    if ann.get('filename'):
+                        sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
+                        if os.path.exists(sp):
+                            src_path = sp
+                    # 2. 尝试 scaled 目录（用 index 推断）
+                    if not src_path:
+                        sp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled',
+                                           f"scaled_{ann['index']:04d}.png")
+                        if os.path.exists(sp):
+                            src_path = sp
+                    # 3. 尝试 original_filename
+                    if not src_path and ann.get('original_filename'):
+                        sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['original_filename'])
+                        if os.path.exists(sp):
+                            src_path = sp
 
-            # 2. 尝试 scaled 目录
-            if not src_path:
-                scaled_name = f"scaled_{ann['index']:04d}.png"
-                src_path = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled', scaled_name)
-                if not os.path.exists(src_path):
-                    src_path = None
+                    if not src_path:
+                        err = f"找不到文件: index={ann['index']}"
+                    else:
+                        char = ann.get('character', '')
+                        if not char:
+                            err = f"没有字符: index={ann['index']}"
+                        else:
+                            # 读取 + 反色
+                            img = load_image(src_path)
+                            inverted = cv2.bitwise_not(img)
+                            # 命名：uniXXXX / uXXXXX + 重复后缀
+                            code = ord(char[0])
+                            if char in char_counts:
+                                char_counts[char] += 1
+                                suffix = f"_{char_counts[char]:02d}"
+                            else:
+                                char_counts[char] = 0
+                                suffix = ""
+                            if code > 0xFFFF:
+                                filename = f"u{code:05X}{suffix}.png"
+                            else:
+                                filename = f"uni{code:04X}{suffix}.png"
+                            output_path = os.path.join(export_dir, filename)
+                            save_image(inverted, output_path)
+                except Exception as e:
+                    err = f"导出失败 index={ann.get('index')}: {e}"
 
-            # 3. 尝试原始 char 文件名
-            if not src_path and ann.get('original_filename'):
-                src_path = os.path.join(OUTPUT_FOLDER, image_hash, ann['original_filename'])
-                if not os.path.exists(src_path):
-                    src_path = None
+                # 写结果
+                with _export_tasks_lock:
+                    task['done'] += 1
+                    if err is None:
+                        task['count'] += 1
+                    else:
+                        task['errors'].append(err)
+                        task['new_errors'].append(err)
 
-            if not src_path:
-                errors.append(f"找不到文件: index={ann['index']}")
-                continue
-
-            print(f"处理文件: {src_path}")
-
-            # 读取图片
-            img = load_image(src_path)
-
-            # 反色：黑底白字 -> 白底黑字
-            inverted = cv2.bitwise_not(img)
-
-            # 生成文件名：uniXXXX.png，重复字加后缀
-            char = ann.get('character', '')
-            if not char:
-                errors.append(f"没有字符: index={ann['index']}")
-                continue
-
-            code = ord(char)
-
-            # 检查是否是重复字符，添加后缀
-            if char in char_counts:
-                char_counts[char] += 1
-                suffix = f"_{char_counts[char]:02d}"
-            else:
-                char_counts[char] = 0
-                suffix = ""
-
-            # 文件名：BMP用uniXXXX，扩展区用uXXXXX
-            if code > 0xFFFF:
-                filename = f"u{code:05X}{suffix}.png"
-            else:
-                filename = f"uni{code:04X}{suffix}.png"
-
-            # 保存
-            output_path = os.path.join(export_dir, filename)
-            save_image(inverted, output_path)
-            print(f"已保存: {output_path}")
-            count += 1
-
+            with _export_tasks_lock:
+                task['status'] = 'done'
+                task['finished_at'] = time.time()
+            elapsed = time.time() - task['started_at']
+            print(f"导出任务完成: {task_id}, {task['count']}/{task['total']} 成功, {elapsed:.1f}s")
         except Exception as e:
-            error_msg = f"导出失败 index={ann.get('index')}: {e}"
-            print(error_msg)
-            errors.append(error_msg)
-            continue
+            print(f"导出任务异常: {task_id}, {e}")
+            import traceback
+            traceback.print_exc()
+            with _export_tasks_lock:
+                task['status'] = 'error'
+                task['error'] = str(e)
+                task['finished_at'] = time.time()
 
-    print(f"导出完成: 成功 {count} 个, 错误 {len(errors)} 个")
+    threading.Thread(target=worker, daemon=True).start()
+    print(f"导出任务启动: {task_id}, hash={image_hash}, {len(annotations)} 张")
 
     return jsonify({
         'success': True,
-        'count': count,
+        'task_id': task_id,
+        'total': len(annotations),
         'output_dir': export_dir,
-        'errors': errors
     })
+
+
+@app.route('/api/export_progress/<task_id>', methods=['GET'])
+def export_progress(task_id):
+    """轮询导出任务进度 + 增量错误"""
+    with _export_tasks_lock:
+        task = _export_tasks.get(task_id)
+        if not task:
+            return jsonify({'status': 'not_found'})
+        new_errors = task['new_errors']
+        task['new_errors'] = []
+        return jsonify({
+            'status': task['status'],
+            'done': task['done'],
+            'total': task['total'],
+            'count': task['count'],
+            'new_errors': new_errors,
+            'errors': task['errors'],
+            'output_dir': task['output_dir'],
+            'error': task.get('error'),
+        })
+
+
+# 导出任务存储 + 清理（与 OCR 任务一致）
+_export_tasks = {}
+_export_tasks_lock = threading.Lock()
+_EXPORT_TASK_TTL = 600
+
+
+def _export_task_cleanup():
+    while True:
+        time.sleep(60)
+        cutoff = time.time() - _EXPORT_TASK_TTL
+        with _export_tasks_lock:
+            stale = [tid for tid, t in _export_tasks.items()
+                     if t.get('finished_at', 0) < cutoff]
+            for tid in stale:
+                _export_tasks.pop(tid, None)
+
+
+threading.Thread(target=_export_task_cleanup, daemon=True).start()
 
 
 @app.route('/api/export_csv', methods=['POST'])

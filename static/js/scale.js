@@ -24,6 +24,10 @@ const elements = {
     totalCount: document.getElementById('totalCount'),
     scaleSlider: document.getElementById('scaleSlider'),
     scaleValue: document.getElementById('scaleValue'),
+    fillRatioSlider: document.getElementById('fillRatioSlider'),
+    fillRatioValue: document.getElementById('fillRatioValue'),
+    maxWidthRatioSlider: document.getElementById('maxWidthRatioSlider'),
+    maxWidthRatioValue: document.getElementById('maxWidthRatioValue'),
     progressContainer: document.getElementById('progressContainer'),
     progressFill: document.getElementById('progressFill'),
     progressText: document.getElementById('progressText'),
@@ -43,6 +47,18 @@ function setupEventListeners() {
     // 滑块事件：v2 = 目标高度倍数，100% = 填满 0.9×512 = 460px
     elements.scaleSlider.addEventListener('input', (e) => {
         elements.scaleValue.textContent = e.target.value + '%';
+    });
+    // 画布填满比例滑块：70-95（百分比）
+    elements.fillRatioSlider.addEventListener('input', (e) => {
+        const pct = parseInt(e.target.value, 10);
+        state.fillRatio = pct / 100;
+        elements.fillRatioValue.textContent = pct + '%';
+    });
+    // 宽字保护滑块：70-100（百分比）
+    elements.maxWidthRatioSlider.addEventListener('input', (e) => {
+        const pct = parseInt(e.target.value, 10);
+        state.maxWidthRatio = pct / 100;
+        elements.maxWidthRatioValue.textContent = pct + '%';
     });
 
     // 按钮事件

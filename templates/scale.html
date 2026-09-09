@@ -383,6 +383,31 @@
             </div>
         </div>
 
+        <!-- v2 算法两个补充参数：填满比例 + 宽字保护 -->
+        <div class="control-section">
+            <h3>画布填满比例</h3>
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span>填满比</span>
+                    <span class="slider-value" id="fillRatioValue">90%</span>
+                </div>
+                <input type="range" class="slider-input" id="fillRatioSlider" min="70" max="95" value="90" step="1">
+                <p class="slider-hint">字高占画布的比例（90% = 460/512px）。调小留白多，调大更饱满</p>
+            </div>
+        </div>
+
+        <div class="control-section">
+            <h3>宽字保护</h3>
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span>宽度上限</span>
+                    <span class="slider-value" id="maxWidthRatioValue">95%</span>
+                </div>
+                <input type="range" class="slider-input" id="maxWidthRatioSlider" min="70" max="100" value="95" step="1">
+                <p class="slider-hint">「一」类宽字的最大宽度比例。95% = 几乎填满，70% = 强制留更多边</p>
+            </div>
+        </div>
+
         <!-- 进度条 -->
         <div class="progress-container" id="progressContainer">
             <div class="progress-bar">
@@ -420,5 +445,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=3"></script>
-<script src="{{ url_for('static', filename='js/scale.js') }}?v=4"></script>
+<script src="{{ url_for('static', filename='js/scale.js') }}?v=5"></script>
 {% endblock %}

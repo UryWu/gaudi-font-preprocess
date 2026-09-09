@@ -1,4 +1,9 @@
-/* 缩放校正页面逻辑 */
+/* 缩放校正页面逻辑
+ *
+ * v2 算法：所有字统一高度（默认填 0.9×512 = 460px 高），宽度按字形自然变。
+ * 旧版是「×1.15」语义（只放大、不归一），导致大字符撑满画布、小字符迷你。
+ * 详见 utils/scale_processor.py → scale_char + docs/任务书_页面3_缩放校正.md
+ */
 
 // 状态管理
 const state = {
@@ -6,7 +11,10 @@ const state = {
     characters: [],
     processedCharacters: [],
     isProcessed: false,
-    outputDir: null
+    outputDir: null,
+    // v2 算法参数（与 scale_processor.py 同步）
+    fillRatio: 0.9,
+    maxWidthRatio: 0.95,
 };
 
 // DOM 元素
@@ -32,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setupEventListeners() {
-    // 滑块事件
+    // 滑块事件：v2 = 目标高度倍数，100% = 填满 0.9×512 = 460px
     elements.scaleSlider.addEventListener('input', (e) => {
         elements.scaleValue.textContent = e.target.value + '%';
     });
@@ -48,14 +56,25 @@ function setupEventListeners() {
 
 // 传统书法顺序：从上到下，从右到左
 function getTraditionalOrder(characters) {
-    // strip_index 大的是右边的列，应该排在前面（先读）
-    // 同一列内，char_index 从小到大（从上到下）
     return [...characters].sort((a, b) => {
         if (a.strip_index !== b.strip_index) {
             return b.strip_index - a.strip_index;  // strip_index大的（右边列）排前面
         }
         return a.char_index - b.char_index;  // 同一列，char_index小的（上面）排前面
     });
+}
+
+// 构造 /api/process_scale 与 /api/save_scaled 的通用参数对象
+// 集中管理方便后续调整（如新增 align/background 选项时不用到处改）
+function getScaleParams() {
+    return {
+        scale: parseInt(elements.scaleSlider.value, 10) / 100,
+        align: document.querySelector('input[name="align"]:checked')?.value || 'center',
+        background: document.querySelector('input[name="background"]:checked')?.value || 'black',
+        target_size: 512,
+        fill_ratio: state.fillRatio,
+        max_width_ratio: state.maxWidthRatio,
+    };
 }
 
 // 加载字符数据
@@ -88,7 +107,8 @@ async function loadCharacters() {
         showPreviewGrid();
         updateUI();
 
-        // 自动进行默认居中处理
+        // 自动进行默认居中处理（v2 算法）
+        // 若磁盘上已有旧版 scaled_*.png，这里也会覆盖（用户刷新页面即自动迁移）
         await autoProcess();
 
     } catch (error) {
@@ -97,19 +117,15 @@ async function loadCharacters() {
     }
 }
 
-// 自动处理（页面加载时使用默认参数）
+// 自动处理（页面加载时使用默认参数；v2 = 高度归一）
 async function autoProcess() {
     if (state.characters.length === 0) {
         return;
     }
 
-    // 使用默认参数
-    const scale = 1.15;  // 默认115%
-    const align = 'center';
-    const background = 'black';
-
+    const params = getScaleParams();
     showProgress();
-    elements.progressText.textContent = '正在计算居中...';
+    elements.progressText.textContent = '正在按高度归一...';
 
     try {
         const response = await fetch('/api/process_scale', {
@@ -118,10 +134,7 @@ async function autoProcess() {
             body: JSON.stringify({
                 hash: state.imageHash,
                 characters: state.characters,
-                scale: scale,
-                align: align,
-                background: background,
-                target_size: 512
+                ...params
             })
         });
 
@@ -140,12 +153,10 @@ async function autoProcess() {
             elements.openDirBtn.disabled = false;
             elements.annotateBtn.disabled = false;
         } else {
-            // 如果自动处理失败，显示原始预览
             renderOriginalPreview();
             console.error('自动处理失败:', data.error);
         }
     } catch (error) {
-        // 如果自动处理失败，显示原始预览
         renderOriginalPreview();
         console.error('自动处理失败:', error);
     }
@@ -197,17 +208,14 @@ function createPreviewCard(char, index) {
     return card;
 }
 
-// 开始处理
+// 开始处理（用户主动点按钮）
 async function startProcess() {
     if (state.characters.length === 0) {
         showToast('没有可处理的字符');
         return;
     }
 
-    const scale = parseInt(elements.scaleSlider.value) / 100;
-    const align = document.querySelector('input[name="align"]:checked').value;
-    const background = document.querySelector('input[name="background"]:checked').value;
-
+    const params = getScaleParams();
     elements.processBtn.disabled = true;
     showProgress();
 
@@ -218,10 +226,7 @@ async function startProcess() {
             body: JSON.stringify({
                 hash: state.imageHash,
                 characters: state.characters,
-                scale: scale,
-                align: align,
-                background: background,
-                target_size: 512
+                ...params
             })
         });
 
@@ -232,10 +237,8 @@ async function startProcess() {
             state.outputDir = data.output_dir;
             state.isProcessed = true;
 
-            // 渲染处理后的预览
             renderProcessedPreview(data.characters);
 
-            // 启用按钮
             elements.saveBtn.disabled = false;
             elements.openDirBtn.disabled = false;
             elements.annotateBtn.disabled = false;
@@ -292,12 +295,15 @@ function updateProgress(current, total) {
 }
 
 // 保存结果
+// 服务端拿到这次请求后，如果 session.scale_algorithm_version < 当前值，会主动重跑所有字符 + 覆盖 scaled 目录。
+// 所以即使 scale 参数没变，第一次保存（算法迁移）也会触发重生成；后续保存无副作用。
 async function saveResults() {
     if (!state.isProcessed) {
         showToast('请先处理');
         return;
     }
 
+    const params = getScaleParams();
     showLoading('保存中...');
 
     try {
@@ -306,14 +312,19 @@ async function saveResults() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 hash: state.imageHash,
-                characters: state.processedCharacters
+                characters: state.processedCharacters,
+                ...params
             })
         });
 
         const data = await response.json();
 
         if (data.success) {
-            showToast('保存成功');
+            if (data.regenerated) {
+                showToast(`已自动重新处理 ${data.regenerated_count} 个字符（v${data.algorithm_version} 算法）`);
+            } else {
+                showToast('保存成功');
+            }
         } else {
             throw new Error(data.error);
         }

@@ -3,14 +3,25 @@
 功能：
 1. 检测字符边框（边缘腐蚀 + 轮廓检测）
 2. 字符居中（上下黑边相等，左右黑边相等）
-3. 字符缩放（按比例放大）
+3. 字符缩放（按目标高度归一 + 宽字保护）
 4. 输出标准化（512x512）
+
+算法版本（用于 /api/save_scaled 自动重生成判定）：
+- v1：旧版「×scale」—— 只按固定倍率放大，只防爆框，不同字大小差异大
+- v2：当前——「按目标高度归一」—— 所有字统一高度，宽度按字形自然变
+
+见 docs/任务书_页面3_缩放校正.md
 """
 
 import cv2
 import numpy as np
 import os
 from typing import Tuple, Optional
+
+
+# 算法版本号：scale_char 行为变更时 +1
+# /api/save_scaled 看到 session.version < 当前值就主动重跑所有字符
+ALGORITHM_VERSION = 2
 
 
 def detect_char_bbox(image: np.ndarray) -> Tuple[int, int, int, int]:
@@ -148,20 +159,36 @@ def center_char_in_canvas(
 
 def scale_char(
     image: np.ndarray,
-    scale: float = 1.15,
+    scale: float = 1.0,
     target_size: int = 512,
     align: str = 'center',
-    background: str = 'black'
+    background: str = 'black',
+    fill_ratio: float = 0.9,
+    max_width_ratio: float = 0.95,
 ) -> np.ndarray:
     """
-    缩放字符并输出标准化尺寸
+    缩放字符并输出标准化尺寸（按目标高度归一）
+
+    算法说明（v2）：
+        1. 检测字符 bbox (w, h)
+        2. 目标高度 = target_size * fill_ratio * scale
+        3. scale_factor = target_h / h（按高度归一）
+        4. 宽字保护：若 new_w > target_size * max_width_ratio，再按宽压（保持比例）
+        5. 居中放在 512x512 画布
+
+    与 v1（×1.15 + 仅防爆框）区别：v1 让大字符大、小字符小；v2 让所有字统一高度。
 
     Args:
         image: 输入图片
-        scale: 缩放比例 (1.0 - 2.0)
-        target_size: 目标尺寸
+        scale: 目标高度倍数（0.5–1.5，默认 1.0）。
+               1.0 = 填满 fill_ratio（默认 0.9×512 = 460px 高）；
+               1.5 = 1.35×512 = 691，但会被 fill_ratio 上限压回 460。
+               注：旧版叫「缩放比例」= 「字 × 1.15」，语义已变。
+        target_size: 目标画布尺寸
         align: 对齐方式
         background: 背景方式
+        fill_ratio: 字符填满画布的比例（默认 0.9 = 460/512）
+        max_width_ratio: 超宽字保护的宽度上限（默认 0.95）
 
     Returns:
         处理后的图片
@@ -184,19 +211,26 @@ def scale_char(
     # 裁剪字符区域
     char_region = gray[y:y+h, x:x+w]
 
-    # 计算缩放后的尺寸
-    # 目标：放大后仍能放入 target_size
-    max_char_size = int(target_size * 0.9)  # 留10%边距
+    # === 新算法（v2）：按目标高度归一 ===
+    # 目标高度 = canvas * fill_ratio * scale（scale 是用户滑块）
+    # 例：target_size=512, fill=0.9, scale=1.0 → target_h = 460
+    # 例：scale=1.5 → target_h = 691，但仍然受 fill_ratio 实际意义约束
+    #     （即实际生效高度不超过 fill_ratio * target_size）
+    target_h_raw = target_size * fill_ratio * scale
+    target_h = min(target_h_raw, target_size * fill_ratio)  # 高度上限：fill_ratio * target_size
 
-    # 先按比例缩放
-    new_w = int(w * scale)
-    new_h = int(h * scale)
+    # scale_factor = 目标高度 / 实际高度 —— 统一所有字的高度
+    scale_factor = target_h / h if h > 0 else 1.0
+    new_h = int(round(h * scale_factor))
+    new_w = int(round(w * scale_factor))
 
-    # 如果缩放后超过最大尺寸，按最大尺寸等比缩放
-    if new_w > max_char_size or new_h > max_char_size:
-        ratio = min(max_char_size / new_w, max_char_size / new_h)
-        new_w = int(new_w * ratio)
-        new_h = int(new_h * ratio)
+    # 宽字保护：归一化后宽度超过 max_width_ratio * canvas 时按宽再压一次
+    # 例：fill=0.9, scale=1.0, max_w=0.95 → 宽字符最多占 95% 画布宽
+    max_w_px = target_size * max_width_ratio
+    if new_w > max_w_px:
+        ratio = max_w_px / new_w
+        new_w = int(round(new_w * ratio))
+        new_h = int(round(new_h * ratio))
 
     # 缩放字符
     if new_w > 0 and new_h > 0:
@@ -248,21 +282,25 @@ def scale_char(
 def process_character(
     image_path: str,
     output_path: str,
-    scale: float = 1.15,
+    scale: float = 1.0,
     target_size: int = 512,
     align: str = 'center',
-    background: str = 'black'
+    background: str = 'black',
+    fill_ratio: float = 0.9,
+    max_width_ratio: float = 0.95,
 ) -> bool:
     """
-    处理单个字符图片
+    处理单个字符图片（v2 算法：按目标高度归一）
 
     Args:
         image_path: 输入图片路径
         output_path: 输出图片路径
-        scale: 缩放比例
+        scale: 目标高度倍数（0.5–1.5，默认 1.0）
         target_size: 目标尺寸
         align: 对齐方式
         background: 背景方式
+        fill_ratio: 字符填满画布的比例（默认 0.9）
+        max_width_ratio: 超宽字保护的宽度上限（默认 0.95）
 
     Returns:
         是否成功
@@ -273,14 +311,14 @@ def process_character(
         if image is None:
             return False
 
-        # 处理
-        result = scale_char(image, scale, target_size, align, background)
+        # 处理（v2 算法）
+        result = scale_char(
+            image, scale, target_size, align, background,
+            fill_ratio=fill_ratio, max_width_ratio=max_width_ratio,
+        )
 
         # 保存
-        if background == 'transparent':
-            cv2.imwrite(output_path, result)
-        else:
-            cv2.imwrite(output_path, result)
+        cv2.imwrite(output_path, result)
 
         return True
     except Exception as e:
@@ -344,10 +382,12 @@ def process_character_with_adjust(
     adjust_bottom: int = 0,
     adjust_left: int = 0,
     adjust_right: int = 0,
-    scale: float = 1.15,
+    scale: float = 1.0,
     target_size: int = 512,
     align: str = 'center',
-    background: str = 'black'
+    background: str = 'black',
+    fill_ratio: float = 0.9,
+    max_width_ratio: float = 0.95,
 ) -> bool:
     """
     处理单个字符图片（带调整值）
@@ -356,10 +396,13 @@ def process_character_with_adjust(
         image_path: 输入图片路径
         output_path: 输出图片路径
         adjust_top/bottom/left/right: 调整值
-        scale: 缩放比例
+        scale: 目标高度倍数（0.5–1.5，默认 1.0）。
+               详见 scale_char 的 scale 参数说明。
         target_size: 目标尺寸
         align: 对齐方式
         background: 背景方式
+        fill_ratio: 字符填满画布的比例（默认 0.9）
+        max_width_ratio: 超宽字保护的宽度上限（默认 0.95）
 
     Returns:
         是否成功
@@ -375,8 +418,11 @@ def process_character_with_adjust(
             image, adjust_top, adjust_bottom, adjust_left, adjust_right
         )
 
-        # 处理
-        result = scale_char(adjusted, scale, target_size, align, background)
+        # 处理（v2 算法：按目标高度归一）
+        result = scale_char(
+            adjusted, scale, target_size, align, background,
+            fill_ratio=fill_ratio, max_width_ratio=max_width_ratio,
+        )
 
         # 保存
         cv2.imwrite(output_path, result)

@@ -370,16 +370,16 @@
             </div>
         </div>
 
-        <!-- 字符放大比例 -->
+        <!-- 目标高度倍数：v2 算法 = 所有字统一填到目标高度，宽度按字形自然变 -->
         <div class="control-section">
-            <h3>字符放大比例</h3>
+            <h3>目标高度倍数</h3>
             <div class="slider-container">
                 <div class="slider-header">
-                    <span>比例</span>
-                    <span class="slider-value" id="scaleValue">115%</span>
+                    <span>倍数</span>
+                    <span class="slider-value" id="scaleValue">100%</span>
                 </div>
-                <input type="range" class="slider-input" id="scaleSlider" min="100" max="200" value="115">
-                <p class="slider-hint">放大字符以减少黑边，最终输出仍为512x512</p>
+                <input type="range" class="slider-input" id="scaleSlider" min="50" max="150" value="100">
+                <p class="slider-hint">所有字统一填到约 90% 画布高度，宽度按字形自然变（口方、一宽、丶窄）</p>
             </div>
         </div>
 
@@ -420,5 +420,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=3"></script>
-<script src="{{ url_for('static', filename='js/scale.js') }}?v=3"></script>
+<script src="{{ url_for('static', filename='js/scale.js') }}?v=4"></script>
 {% endblock %}

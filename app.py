@@ -985,18 +985,25 @@ def open_path():
 
 @app.route('/api/process_scale', methods=['POST'])
 def process_scale():
-    """处理缩放校正"""
-    from utils.scale_processor import apply_adjustments, scale_char
+    """处理缩放校正（v2 算法：按目标高度归一）"""
+    from utils.scale_processor import (
+        apply_adjustments, scale_char, ALGORITHM_VERSION
+    )
     import traceback
 
     try:
         data = request.get_json()
         image_hash = data.get('hash')
         characters = data.get('characters', [])
-        scale = data.get('scale', 1.15)
+        # scale 现在是「目标高度倍数」：1.0 = fill_ratio * canvas 高度（默认 0.9 = 460）
+        scale = float(data.get('scale', 1.0))
         align = data.get('align', 'center')
         background = data.get('background', 'black')
         target_size = data.get('target_size', 512)
+        # 字符填满画布的比例（高度方向）：0.9 = 字高 460/512
+        fill_ratio = float(data.get('fill_ratio', 0.9))
+        # 超宽字保护的宽度上限：0.95 = 宽字符最多占 95% 画布宽
+        max_width_ratio = float(data.get('max_width_ratio', 0.95))
 
         if not image_hash:
             return jsonify({'error': '缺少图片哈希'}), 400
@@ -1031,8 +1038,11 @@ def process_scale():
                 if adjust_top > 0 or adjust_bottom > 0 or adjust_left > 0 or adjust_right > 0:
                     img = apply_adjustments(img, adjust_top, adjust_bottom, adjust_left, adjust_right)
 
-                # 处理缩放和居中
-                processed = scale_char(img, scale, target_size, align, background)
+                # 处理缩放和居中（v2：按目标高度归一）
+                processed = scale_char(
+                    img, scale, target_size, align, background,
+                    fill_ratio=fill_ratio, max_width_ratio=max_width_ratio,
+                )
 
                 # 保存
                 output_filename = f"scaled_{i:04d}.png"
@@ -1054,11 +1064,13 @@ def process_scale():
                 traceback.print_exc()
                 continue
 
+        # 把算法版本写入 session（让 /api/save_scaled 知道是否需要重跑）
         return jsonify({
             'success': True,
             'characters': processed_characters,
             'output_dir': output_dir,
-            'total': len(processed_characters)
+            'total': len(processed_characters),
+            'algorithm_version': ALGORITHM_VERSION,
         })
     except Exception as e:
         print(f"process_scale 错误: {e}")
@@ -1068,7 +1080,19 @@ def process_scale():
 
 @app.route('/api/save_scaled', methods=['POST'])
 def save_scaled():
-    """保存缩放校正结果"""
+    """保存缩放校正结果
+
+    自动重生成机制：
+    - 如果 session 里的 scale_algorithm_version < 当前 ALGORITHM_VERSION
+      （或缺失，默认当 v1），说明磁盘上 scaled_*.png 是旧算法生成的。
+      本次保存会主动重跑所有字符 + 覆盖 scaled 目录。
+    - 如果版本已是最新，仅写元数据，不动磁盘。
+    """
+    from utils.scale_processor import (
+        apply_adjustments, scale_char, ALGORITHM_VERSION
+    )
+    import traceback
+
     data = request.get_json()
     image_hash = data.get('hash')
     characters = data.get('characters', [])
@@ -1081,12 +1105,87 @@ def save_scaled():
     if not session_data:
         return jsonify({'error': '会话不存在'}), 404
 
-    # 保存缩放校正数据
+    # 取出本批次的处理参数（前端 /api/process_scale 返回时带回的）
+    # 若前端没传，回退到 session 中上次保存的；都没有则用新算法默认值
+    scale = float(data.get('scale', session_data.get('scale_height_multiplier', 1.0)))
+    fill_ratio = float(data.get('fill_ratio', session_data.get('scale_fill_ratio', 0.9)))
+    max_width_ratio = float(data.get('max_width_ratio', session_data.get('scale_max_width_ratio', 0.95)))
+    align = data.get('align', session_data.get('scale_align', 'center'))
+    background = data.get('background', session_data.get('scale_background', 'black'))
+    target_size = int(data.get('target_size', 512))
+
+    # === 自动重生成：旧版本算法 → 用新算法重跑所有字符 ===
+    old_version = int(session_data.get('scale_algorithm_version', 1))
+    need_regenerate = old_version < ALGORITHM_VERSION
+    regenerated_count = 0
+
+    if need_regenerate:
+        # 优先用本次请求的 characters；缺失时回退到 session.characters
+        src_chars = characters if characters else session_data.get('characters', [])
+        output_dir = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled')
+        os.makedirs(output_dir, exist_ok=True)
+        new_processed = []
+        for i, char in enumerate(src_chars):
+            try:
+                filename = char.get('original_filename') or char.get('filename', '')
+                if not filename:
+                    continue
+                original_path = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+                if not os.path.exists(original_path):
+                    print(f"save_scaled 重生成：文件不存在 {original_path}")
+                    continue
+                img = load_image(original_path)
+                # 应用调整值
+                adjust_top = char.get('adjust_top', 0) or 0
+                adjust_bottom = char.get('adjust_bottom', 0) or 0
+                adjust_left = char.get('adjust_left', 0) or 0
+                adjust_right = char.get('adjust_right', 0) or 0
+                if adjust_top > 0 or adjust_bottom > 0 or adjust_left > 0 or adjust_right > 0:
+                    img = apply_adjustments(img, adjust_top, adjust_bottom, adjust_left, adjust_right)
+                # 用新算法缩放
+                processed = scale_char(
+                    img, scale, target_size, align, background,
+                    fill_ratio=fill_ratio, max_width_ratio=max_width_ratio,
+                )
+                output_filename = f"scaled_{i:04d}.png"
+                output_path = os.path.join(output_dir, output_filename)
+                if background == 'transparent':
+                    cv2.imwrite(output_path, processed)
+                else:
+                    save_image(processed, output_path)
+                new_processed.append({
+                    'index': i,
+                    'original_filename': filename,
+                    'processed_filename': output_filename,
+                    'processed_url': f'/output/{image_hash}/scaled/{output_filename}'
+                })
+                regenerated_count += 1
+            except Exception as e:
+                print(f"save_scaled 重生成字符 {i} 失败: {e}")
+                traceback.print_exc()
+                continue
+        # 用新生成的列表替换本次的 characters（保证磁盘和元数据一致）
+        characters = new_processed
+        print(f"save_scaled 自动重生成：{image_hash}, v{old_version} → v{ALGORITHM_VERSION}, {regenerated_count} 个字符")
+
+    # 保存缩放校正数据 + 算法版本
     session_data['scaled_characters'] = characters
     session_data['scale_processed'] = True
+    session_data['scale_algorithm_version'] = ALGORITHM_VERSION
+    # 把参数也存下来，下次 save_scaled 重生成时能拿到（前端可能不重传）
+    session_data['scale_height_multiplier'] = scale
+    session_data['scale_fill_ratio'] = fill_ratio
+    session_data['scale_max_width_ratio'] = max_width_ratio
+    session_data['scale_align'] = align
+    session_data['scale_background'] = background
     save_session(image_hash, session_data, DATA_FOLDER)
 
-    return jsonify({'success': True})
+    return jsonify({
+        'success': True,
+        'regenerated': need_regenerate,
+        'regenerated_count': regenerated_count,
+        'algorithm_version': ALGORITHM_VERSION,
+    })
 
 
 @app.route('/api/cleanup_intermediate', methods=['POST'])

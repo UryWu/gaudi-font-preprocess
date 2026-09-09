@@ -1589,22 +1589,36 @@ def get_ocr_annotations(image_hash):
 
 @app.route('/api/cleanup_intermediate', methods=['POST'])
 def cleanup_intermediate():
-    """清理中间过程文件，只保留最终导出目录"""
+    """清理中间过程文件，只保留最终导出目录
+
+    参数:
+        hash:        session 哈希（必填）
+        keep_dir:    保留的本次导出目录（旧逻辑用，按时间戳子目录精确保留）
+        keep_exported: bool（新增）。为 true 时不动 exported/，只清过程目录；
+                       供「清理过程图」按钮用——它要清的是过程图，导出目录要保留
+
+    清理范围：cutting_output/char_*.png、scaled/ 整个目录、ocr_tasks/ 整个目录。
+    - ocr_tasks 是 OCR 任务中间状态（每张图识别结果 + 进度），已落盘到 ocr_annotations.json
+      的标注不会丢；下次再 OCR 会重新生成
+    - 当 keep_exported=True 时，旧 exported/ 子目录全部保留
+    - 当 keep_exported=False（默认，旧行为）且给了 keep_dir：删 keep_dir 外的所有 exported 子目录
+    """
     import shutil
 
     data = request.get_json()
     image_hash = data.get('hash')
     keep_dir = data.get('keep_dir', '')  # 保留的最终输出目录
+    keep_exported = bool(data.get('keep_exported', False))
 
     if not image_hash:
         return jsonify({'error': '缺少图片哈希'}), 400
 
     base_dir = os.path.join(OUTPUT_FOLDER, image_hash)
     if not os.path.exists(base_dir):
-        return jsonify({'success': True, 'message': '目录不存在，无需清理'})
+        return jsonify({'success': True, 'message': '目录不存在，无需清理', 'deleted_count': 0})
 
     cleaned = []
-    # 清理切割后的原始文件 (char_XXXX.png 在 cutting_output/ 下)
+    # 1. 清理切割后的原始文件 (char_XXXX.png 在 cutting_output/ 下)
     char_output = os.path.join(base_dir, CHAR_DIR_NAME)
     if os.path.isdir(char_output):
         for f in os.listdir(char_output):
@@ -1612,17 +1626,25 @@ def cleanup_intermediate():
             if os.path.isfile(fpath) and f.startswith('char_') and f.endswith('.png'):
                 os.remove(fpath)
                 cleaned.append(f)
-    # 遍历 session 根的其他目录
+    # 2. 遍历 session 根的其他目录
     for f in os.listdir(base_dir):
         fpath = os.path.join(base_dir, f)
         if os.path.isdir(fpath):
             dirname = f.lower()
-            # 清理 scaled 目录
+            # 清理 scaled 目录（过程图）
             if dirname == 'scaled':
                 shutil.rmtree(fpath)
                 cleaned.append(f'{f}/ (整个目录)')
-            # 清理旧的 exported 目录中非 keep_dir 的
+            # 清理 ocr_tasks 目录（OCR 任务中间状态；标注结果已落 ocr_annotations.json 不丢）
+            elif dirname == 'ocr_tasks':
+                shutil.rmtree(fpath)
+                cleaned.append(f'{f}/ (整个目录)')
+            # 处理 exported 目录
             elif dirname == 'exported':
+                if keep_exported:
+                    # 「清理过程图」按钮场景：导出目录全部保留
+                    continue
+                # 旧行为：删 keep_dir 外的所有旧导出
                 for sub in os.listdir(fpath):
                     sub_path = os.path.join(fpath, sub)
                     if os.path.isdir(sub_path) and sub_path != keep_dir:
@@ -1632,6 +1654,7 @@ def cleanup_intermediate():
     return jsonify({
         'success': True,
         'cleaned': cleaned,
+        'deleted_count': len(cleaned),
         'message': f'已清理 {len(cleaned)} 项中间文件'
     })
 

@@ -29,6 +29,7 @@ const elements = {
     exportBtn: document.getElementById('exportBtn'),
     csvBtn: document.getElementById('csvBtn'),
     openDirBtn: document.getElementById('openDirBtn'),
+    cleanupBtn: document.getElementById('cleanupBtn'),
     annotateBtn: document.getElementById('annotateBtn'),
     ocrAnnotateBtn: document.getElementById('ocrAnnotateBtn'),
     saveAnnotBtn: document.getElementById('saveAnnotBtn'),
@@ -96,6 +97,7 @@ function setupEventListeners() {
     elements.exportBtn.addEventListener('click', exportImages);
     elements.csvBtn.addEventListener('click', exportCSV);
     elements.openDirBtn.addEventListener('click', openOutputDirectory);
+    if (elements.cleanupBtn) elements.cleanupBtn.addEventListener('click', cleanupIntermediate);
 
     // 标注按钮
     elements.annotateBtn.addEventListener('click', startAnnotate);
@@ -1237,19 +1239,8 @@ async function exportImages() {
                     // 让 toast 看到 CSV 行数，下游 AI 训练不用再手动点「导出 FontLab CSV」。
                     const csvHint = p.csv_path ? `，CSV ${p.csv_row_count || '?'} 行` : '，CSV 未生成';
                     showToast(`导出完成：${p.count} 张${csvHint}${errCount ? `（${errCount} 个错误）` : ''}`);
-
-                    // 3. 清理中间文件
-                    try {
-                        const cleanResp = await fetch('/api/cleanup_intermediate', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ hash: state.imageHash, keep_dir: p.output_dir || outputDir })
-                        });
-                        const cleanData = await cleanResp.json();
-                        if (cleanData.success) console.log('中间文件清理完成:', cleanData.message);
-                    } catch (e) {
-                        console.warn('清理中间文件失败:', e);
-                    }
+                    // 注意：导出后不再自动清理 cutting_output/scaled 等中间文件，
+                    // 保留过程图便于回溯/重导。需要清理时点工具栏「清理过程图」按钮。
                     reset();
                 } else if (p.status === 'error') {
                     clearInterval(pollTimer);
@@ -1353,6 +1344,57 @@ async function openOutputDirectory() {
     } catch (error) {
         showToast('打开目录失败: ' + error.message);
     }
+}
+
+// 清理过程图（cutting_output/scaled/ocr_tasks）
+// 导出训练包后不再自动清理，让用户保留 cutting_output/scaled/ocr_tasks
+// 用于回溯（看原图确认错误原因）或重新导出。需要清盘时主动点此按钮。
+//
+// 设计：破坏性操作，必弹 confirm + 二次确认输入「确认清理」防误点。
+// 后端 cleanup_intermediate 不动 exported/，只清过程目录。
+async function cleanupIntermediate() {
+    if (!state.imageHash) {
+        showToast('请先加载会话');
+        return;
+    }
+    // 第一次确认：列出要删什么
+    const ok1 = confirm(
+        '将删除以下过程文件（不可撤销）：\n\n' +
+        '• cutting_output/char_*.png（切割原始图）\n' +
+        '• scaled/scaled_*.png（缩放校正图）\n' +
+        '• ocr_tasks/*.json（OCR 任务中间结果，已落 ocr_annotations.json 的标注不会丢）\n\n' +
+        '确定清理？'
+    );
+    if (!ok1) return;
+    // 第二次确认：手输「确认清理」防误点
+    const ok2 = prompt('请输入「确认清理」四个字继续：');
+    if ((ok2 || '').trim() !== '确认清理') {
+        showToast('已取消清理');
+        return;
+    }
+
+    showLoading('正在清理过程图...');
+    try {
+        const r = await fetch('/api/cleanup_intermediate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: state.imageHash,
+                keep_dir: state.exportedDir || '',
+                // 新参数：保留 exported，不动导出目录
+                keep_exported: true
+            })
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || '清理失败');
+        showToast(`清理完成：删 ${data.deleted_count} 项`);
+        // 刷新页面：当前页面所有 scaled_*.png 的图片都没了，刷新让前端拿 cutting_output 兜底
+        // （或直接重新去 /scale 重生，最干净）
+        setTimeout(() => location.reload(), 800);
+    } catch (err) {
+        showToast('清理失败: ' + err.message);
+    }
+    hideLoading();
 }
 
 // === OCR 自动标注 ===

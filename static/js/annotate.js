@@ -513,28 +513,44 @@ function saveOcrAnnotation(filename, simplified, opts) {
 // 后端不覆盖已有的 manual 标注——保护已手动调整的卡。
 async function saveManualAnnotations() {
     if (!state.imageHash) return;
-    const annotations = {};
     const cards = document.querySelectorAll('.char-card');
-    let nonEmpty = 0;
-    // 遍历所有卡，取每张卡对应的 filename（与 loadOcrAnnotations 同规则）
-    // 简体 + 繁体一并收集（繁体框可能是用户手动填的或 OCR 自动转的）
+    // 第一步：扫出所有 simp 有值的卡，收集成 entries
+    // 简体 + 繁体框一并读取
+    const entries = [];
     cards.forEach((card, idx) => {
         const simpInput = card.querySelector('.simplified-input');
         if (!simpInput) return;
-        const char = (simpInput.value || '').trim();
-        if (!char) return;   // 空卡跳过
+        const simp = (simpInput.value || '').trim();
+        if (!simp) return;   // 空卡跳过
         const tradInput = card.querySelector('.traditional-input');
-        const tradChar = (tradInput && tradInput.value || '').trim();
+        const trad = (tradInput && tradInput.value || '').trim();
         const charObj = state.characters[idx];
         if (!charObj) return;
         const fnKey = charObj.processed_filename || charObj.filename;
         if (!fnKey) return;
-        annotations[fnKey] = { simplified: char, traditional: tradChar };
-        nonEmpty++;
+        entries.push({ card, idx, fnKey, simp, trad });
     });
-    if (nonEmpty === 0) {
+    if (entries.length === 0) {
         showToast('没有需要保存的标注');
         return;
+    }
+    // 第二步：繁体框为空的卡，先批量补一次繁体（只发一次接口），
+    // 确保保存进 json 的不只是简体。fillMissingTraditional 会直接填各卡繁体框。
+    const missing = entries
+        .filter(e => !e.trad)
+        .map(e => ({ card: e.card, index: e.idx, simplified: e.simp }));
+    if (missing.length > 0) {
+        await fillMissingTraditional(missing);
+        // 转换完成后重读各卡繁体框（fillMissingTraditional 已填入）
+        for (const e of entries) {
+            const tradInput = e.card.querySelector('.traditional-input');
+            e.trad = (tradInput && tradInput.value || '').trim();
+        }
+    }
+    // 第三步：组装对象（simplified + traditional 都有）批量 POST
+    const annotations = {};
+    for (const e of entries) {
+        annotations[e.fnKey] = { simplified: e.simp, traditional: e.trad };
     }
     elements.saveAnnotBtn.disabled = true;
     const prev = elements.saveAnnotBtn.textContent;

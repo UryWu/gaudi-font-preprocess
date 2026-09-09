@@ -1375,9 +1375,8 @@ def bulk_save_ocr_annotations(image_hash):
                 annotations.pop(filename, None)
                 continue
             existing = annotations.get(filename)
-            # 已存在的 manual 标注 → 不覆盖（用户可能后端手动改过）
-            if isinstance(existing, dict) and existing.get('source') == 'manual':
-                continue
+            # 注：不因 existing 是 manual 就跳过——「保存标注」就是用户显式想覆盖
+            # 当前页面内容，旧 manual 记录（如曾存空 traditional）也要能更新。
             # 繁体：本次传入优先；没传则继承已有记录（OCR 已算好的繁体，别丢）
             prev_trad = existing.get('traditional', '') if isinstance(existing, dict) else ''
             annotations[filename] = {

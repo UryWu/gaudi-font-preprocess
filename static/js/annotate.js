@@ -44,6 +44,8 @@ const elements = {
     cardSearchInput: document.getElementById('cardSearchInput'),
     cardSearchCount: document.getElementById('cardSearchCount'),
     cardSearchClear: document.getElementById('cardSearchClear'),
+    cardSearchHelp: document.getElementById('cardSearchHelp'),
+    cardSearchTip: document.getElementById('cardSearchTip'),
     shortcutHelpModal: document.getElementById('shortcutHelpModal'),
     shortcutHelpClose: document.getElementById('shortcutHelpClose'),
 };
@@ -128,6 +130,19 @@ function setupEventListeners() {
         elements.cardSearchInput.value = '';
         applySearch('');
         elements.cardSearchInput.focus();
+    });
+    // 用法提示气泡：点 ? 切换显示
+    elements.cardSearchHelp.addEventListener('click', (e) => {
+        e.stopPropagation();
+        elements.cardSearchTip.hidden = !elements.cardSearchTip.hidden;
+    });
+    // 外部点击关闭
+    document.addEventListener('click', (e) => {
+        if (!elements.cardSearchTip.hidden &&
+            !elements.cardSearchTip.contains(e.target) &&
+            e.target !== elements.cardSearchHelp) {
+            elements.cardSearchTip.hidden = true;
+        }
     });
 
     // 快捷键帮助 modal
@@ -806,7 +821,8 @@ async function importDirectory() {
     input.click();
 }
 
-// 导出白底黑字
+// 导出白底黑字（异步：启动 task → 轮询 progress → 清理中间文件）
+// 329 张反色+保存需要 5-10s，sync 会让请求挂死。改成后台线程 + 进度条（与 OCR 一致）。
 async function exportImages() {
     if (state.characters.length === 0) {
         showToast('没有可导出的字符');
@@ -841,9 +857,24 @@ async function exportImages() {
         return;
     }
 
-    showLoading('正在导出...');
+    // 禁用导出按钮 + 显示进度
+    elements.exportBtn.disabled = true;
+    elements.ocrProgress.style.display = 'flex';
+    elements.ocrProgressFill.style.width = '0%';
+    elements.ocrProgressText.textContent = `准备导出 ${annotations.length} 张…`;
+
+    let taskId = null;
+    let pollTimer = null;
+    let outputDir = null;
+
+    const reset = () => {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        elements.ocrProgress.style.display = 'none';
+        elements.exportBtn.disabled = false;
+    };
 
     try {
+        // 1. 启动导出任务
         const response = await fetch('/api/export_annotated', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -853,36 +884,61 @@ async function exportImages() {
                 mode: state.mode
             })
         });
-
         const data = await response.json();
+        if (!data.success) throw new Error(data.error);
+        taskId = data.task_id;
+        outputDir = data.output_dir;
 
-        if (data.success) {
-            state.exportedDir = data.output_dir;
-            elements.openDirBtn.disabled = false;
-            showToast(`成功导出 ${data.count} 个字符到 ${data.output_dir}`);
-
-            // 清理中间过程文件
+        // 2. 轮询进度
+        pollTimer = setInterval(async () => {
             try {
-                const cleanResp = await fetch('/api/cleanup_intermediate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ hash: state.imageHash, keep_dir: data.output_dir })
-                });
-                const cleanData = await cleanResp.json();
-                if (cleanData.success) {
-                    console.log('中间文件清理完成:', cleanData.message);
+                const r = await fetch(`/api/export_progress/${taskId}`);
+                const p = await r.json();
+                if (p.status === 'not_found') {
+                    showToast('导出任务丢失（可能服务器重启）');
+                    reset();
+                    return;
                 }
-            } catch (e) {
-                console.warn('清理中间文件失败:', e);
+                const percent = p.total > 0 ? (p.done / p.total * 100) : 0;
+                elements.ocrProgressFill.style.width = percent.toFixed(1) + '%';
+                elements.ocrProgressText.textContent = `导出 ${p.done}/${p.total} (${percent.toFixed(0)}%)`;
+
+                if (p.status === 'done') {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    state.exportedDir = p.output_dir || outputDir;
+                    elements.openDirBtn.disabled = false;
+                    const errCount = (p.errors || []).length;
+                    showToast(`导出完成：${p.count} 张${errCount ? `（${errCount} 个错误）` : ''}`);
+
+                    // 3. 清理中间文件
+                    try {
+                        const cleanResp = await fetch('/api/cleanup_intermediate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ hash: state.imageHash, keep_dir: p.output_dir || outputDir })
+                        });
+                        const cleanData = await cleanResp.json();
+                        if (cleanData.success) console.log('中间文件清理完成:', cleanData.message);
+                    } catch (e) {
+                        console.warn('清理中间文件失败:', e);
+                    }
+                    reset();
+                } else if (p.status === 'error') {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    showToast('导出失败: ' + (p.error || '未知错误'));
+                    reset();
+                }
+            } catch (err) {
+                console.warn('导出轮询失败:', err);
+                // 网络抖动：继续轮询
             }
-        } else {
-            throw new Error(data.error);
-        }
+        }, 1000);
     } catch (error) {
         showToast('导出失败: ' + error.message);
+        reset();
     }
-
-    hideLoading();
 }
 
 // 导出CSV

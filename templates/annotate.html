@@ -309,6 +309,7 @@
     flex: 1;
     overflow: auto;
     padding: 20px;
+    position: relative;  /* 锚点：让内部 .card-search-tip 可以 absolute 定位 */
 }
 
 .card-grid {
@@ -469,7 +470,10 @@
     position: sticky;
     top: 0;
     z-index: 5;
+    position: -webkit-sticky;  /* Safari fallback */
 }
+
+/* container for search bar + tip absolute positioning */
 
 .card-search-icon {
     font-size: 14px;
@@ -512,6 +516,89 @@
 .card-search-clear:hover {
     background: #f0f0f0;
     color: #c0392b;
+}
+
+/* 搜索用法提示按钮 + 气泡 */
+.card-search-help {
+    background: transparent;
+    border: 1px solid #ddd;
+    color: #666;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.card-search-help:hover {
+    background: #7B9A9D;
+    color: white;
+    border-color: #7B9A9D;
+}
+
+.card-search-tip {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 30px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 10px 14px;
+    z-index: 20;
+    min-width: 320px;
+    font-size: 12px;
+}
+
+.card-search-tip[hidden] {
+    display: none;
+}
+
+.card-search-tip-header {
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.card-search-tip-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: #555;
+}
+
+.card-search-tip-table td {
+    padding: 3px 8px 3px 0;
+    vertical-align: top;
+}
+
+.card-search-tip-table td:first-child {
+    width: 90px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.card-search-tip-table code {
+    background: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: #c0392b;
+    font-size: 11px;
+}
+
+.card-search-tip-footer {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid #e0e0e0;
+    color: #888;
+    font-size: 11px;
 }
 
 /* 键盘焦点卡：蓝色描边 */
@@ -754,9 +841,23 @@ kbd {
         <!-- 搜索栏：键盘 / 聚焦 + Enter 实时过滤 -->
         <div class="card-search-bar" id="cardSearchBar" style="display: none;">
             <span class="card-search-icon">🔍</span>
-            <input type="text" id="cardSearchInput" placeholder="搜索：字符 / U+4E2D / 1-50 / index" autocomplete="off">
+            <input type="text" id="cardSearchInput" placeholder="字符 / U+4E2D / 1-50（空格 AND 组合）" autocomplete="off">
+            <button class="card-search-help" id="cardSearchHelp" title="查看搜索用法">?</button>
             <span class="card-search-count" id="cardSearchCount">0/0</span>
             <button class="card-search-clear" id="cardSearchClear" title="清空搜索 (Esc)">✕</button>
+            <!-- 用法提示气泡（点击 ? 弹出 / 外部点击关闭） -->
+            <div class="card-search-tip" id="cardSearchTip" hidden>
+                <div class="card-search-tip-header">搜索用法</div>
+                <table class="card-search-tip-table">
+                    <tr><td><code>中</code></td><td>含「中」字的卡（简体或繁体）</td></tr>
+                    <tr><td><code>U+4E2D</code></td><td>U+4E2D = 「中」</td></tr>
+                    <tr><td><code>4E2D</code></td><td>同上，省略 U+ 前缀</td></tr>
+                    <tr><td><code>42</code></td><td>第 42 张（1-based）</td></tr>
+                    <tr><td><code>1-50</code></td><td>第 1 到 50 张</td></tr>
+                    <tr><td><code>中 1-50</code></td><td>前 50 张里含「中」字（空格 AND 组合）</td></tr>
+                </table>
+                <div class="card-search-tip-footer">⌨ 按 <kbd>/</kbd> 聚焦搜索框 · <kbd>Esc</kbd> 清空</div>
+            </div>
         </div>
         <div id="emptyState" class="empty-state-annotate">
             <p>暂无字符数据</p>
@@ -797,5 +898,5 @@ kbd {
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=16"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=17"></script>
 {% endblock %}

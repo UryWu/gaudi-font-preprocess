@@ -1779,32 +1779,41 @@ def export_annotated():
     def worker():
         task = _export_tasks[task_id]
         char_counts = {}
+        # CSV 行缓存：{filename, unicode, character, simplified, traditional}
+        # source_map：{源文件名(ann.filename): 导出名}（只有 ann 带 filename 才记）
+        csv_rows = []
+        source_map = {}
         try:
             for ann in annotations:
                 err = None
+                png_filename = None  # 记录本次成功写入的导出文件名（用于 CSV/source_map）
                 try:
-                    # 1. 尝试原始文件名（cutting_output/ 优先，兼容老数据在 session 根）
+                    # 1. 尝试 ann.filename 走 scaled/ 子目录（最常见路径）
                     src_path = None
-                    if ann.get('filename'):
-                        # scaled_*.png 直接放 session 根；char_*.png 在 cutting_output/
-                        if ann['filename'].startswith('scaled_'):
-                            sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
-                        else:
-                            sp = os.path.join(char_dir(image_hash), ann['filename'])
+                    if ann.get('filename') and ann['filename'].startswith('scaled_'):
+                        sp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled',
+                                           ann['filename'])
                         if os.path.exists(sp):
                             src_path = sp
                         else:
-                            # 老数据回退：session 根
+                            # 兼容老数据：session 根
                             sp2 = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
                             if os.path.exists(sp2):
                                 src_path = sp2
-                    # 2. 尝试 scaled 目录（用 index 推断）
+                    # 2. 尝试 ann.filename 是 char_*.png（/adjust 删卡时也走这条）
+                    if not src_path and ann.get('filename'):
+                        sp = os.path.join(char_dir(image_hash), ann['filename'])
+                        if not os.path.exists(sp):
+                            sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
+                        if os.path.exists(sp):
+                            src_path = sp
+                    # 3. 尝试用 index 推断 scaled 文件（保底，序号与 index 一致时）
                     if not src_path:
                         sp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled',
                                            f"scaled_{ann['index']:04d}.png")
                         if os.path.exists(sp):
                             src_path = sp
-                    # 3. 尝试 original_filename（同样 cutting_output/ 优先）
+                    # 4. 尝试 original_filename（同样 cutting_output/ 优先）
                     if not src_path and ann.get('original_filename'):
                         sp = os.path.join(char_dir(image_hash), ann['original_filename'])
                         if not os.path.exists(sp):
@@ -1822,7 +1831,7 @@ def export_annotated():
                             # 读取 + 反色
                             img = load_image(src_path)
                             inverted = cv2.bitwise_not(img)
-                            # 命名：uniXXXX / uXXXXX + 重复后缀
+                            # 命名：uniXXXX / uXXXXX + 重复后缀（与 export_csv 共享规则）
                             code = ord(char[0])
                             if char in char_counts:
                                 char_counts[char] += 1
@@ -1831,11 +1840,22 @@ def export_annotated():
                                 char_counts[char] = 0
                                 suffix = ""
                             if code > 0xFFFF:
-                                filename = f"u{code:05X}{suffix}.png"
+                                png_filename = f"u{code:05X}{suffix}.png"
                             else:
-                                filename = f"uni{code:04X}{suffix}.png"
-                            output_path = os.path.join(export_dir, filename)
+                                png_filename = f"uni{code:04X}{suffix}.png"
+                            output_path = os.path.join(export_dir, png_filename)
                             save_image(inverted, output_path)
+                            # 同步累积 CSV 行 + source_map 映射（导出 PNG 后立刻收，
+                            # 后续 write 阶段一次落盘；命名和计数与 export_csv 完全一致）
+                            csv_rows.append([
+                                png_filename,
+                                f"U+{code:04X}" if code <= 0xFFFF else f"U+{code:05X}",
+                                char,
+                                ann.get('simplified', ''),
+                                ann.get('traditional', '')
+                            ])
+                            if ann.get('filename'):
+                                source_map[ann['filename']] = png_filename
                 except Exception as e:
                     err = f"导出失败 index={ann.get('index')}: {e}"
 
@@ -1848,11 +1868,37 @@ def export_annotated():
                         task['errors'].append(err)
                         task['new_errors'].append(err)
 
+            # PNG 全部写完 → 同子目录落 CSV + source_map（与 PNG 同时间戳子目录，
+            # 原子化三件套）。ai-font-tool 训练脚本按子目录的 source_map 加载样本图。
+            # 出错也不抛：CSV 是附属产物，PNG 才是主产物
+            if csv_rows:
+                ts_name = os.path.basename(export_dir)  # 时间戳子目录名
+                csv_path = os.path.join(export_dir, f"fontlab_{ts_name}.csv")
+                map_path = os.path.join(export_dir, f"fontlab_{ts_name}.source_map.json")
+                try:
+                    import csv
+                    with open(csv_path, 'w', newline='', encoding='utf-8') as cf:
+                        w = csv.writer(cf)
+                        w.writerow(['filename', 'unicode', 'character',
+                                    'simplified', 'traditional'])
+                        w.writerows(csv_rows)
+                    if source_map:
+                        with open(map_path, 'w', encoding='utf-8') as mf:
+                            json.dump(source_map, mf, ensure_ascii=False, indent=2)
+                    with _export_tasks_lock:
+                        task['csv_path'] = csv_path
+                        task['mapping_path'] = map_path
+                except Exception as ce:
+                    print(f"[export_annotated] CSV 写入失败: {ce}")
+                    with _export_tasks_lock:
+                        task['csv_error'] = str(ce)
+
             with _export_tasks_lock:
                 task['status'] = 'done'
                 task['finished_at'] = time.time()
             elapsed = time.time() - task['started_at']
-            print(f"导出任务完成: {task_id}, {task['count']}/{task['total']} 成功, {elapsed:.1f}s")
+            print(f"导出任务完成: {task_id}, {task['count']}/{task['total']} 成功, "
+                  f"CSV {len(csv_rows)} 行, {elapsed:.1f}s")
         except Exception as e:
             print(f"导出任务异常: {task_id}, {e}")
             import traceback
@@ -1890,6 +1936,10 @@ def export_progress(task_id):
             'new_errors': new_errors,
             'errors': task['errors'],
             'output_dir': task['output_dir'],
+            'csv_path': task.get('csv_path'),
+            'mapping_path': task.get('mapping_path'),
+            'csv_row_count': task.get('count'),  # PNG 成功数 == CSV 行数
+            'csv_error': task.get('csv_error'),
             'error': task.get('error'),
         })
 

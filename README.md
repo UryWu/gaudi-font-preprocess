@@ -78,28 +78,31 @@
 - 输出 FontLab 标准命名的字符图片
 - 重复字符自动添加后缀区分
 
-#### 5.1 导出产物：图片 + CSV + 源文件映射
+#### 5.1 导出产物：图片 + CSV + 源文件映射（原子化）
 
-「导出」按钮会产生两份配套产物（路径都在 `data/sessions/<hash>/exported/`，时间戳命名）：
+「导出白底黑字」按钮**一次**产生三件套，全部放在**同一时间戳子目录**（`data/sessions/<hash>/exported/<时间戳>/`），保证原子化和跨产物对得上号：
 
 | 产物 | 用途 |
 |---|---|
-| `fontlab_<时间戳>.csv` | **字符图 → 汉字/码点/简繁对照表**。FontLab 等字体编辑器按文件名 `uniXXXX` 自识别图对应哪个字；AI 字体工具（[高迪书法字库 AI 字体工具](https://github.com/gaudi1209/ai-font-tool)）靠这表知道每张样本图对应哪个 label |
-| `fontlab_<时间戳>.source_map.json` | **`scaled_NNNN.png`（源切图名）→ 导出文件名** 的映射。下游 AI 工具按源切图名加载样本图时，可以用这表把样本对到导出 CSV 的某一行 |
+| `*.png`（白底黑字 460 字符 + 26px padding） | FontLab / AI 字体工具训练的样本图。命名 `uniXXXX[_NN].png`，同字多个样本自动加 `_01/_02` 后缀去重 |
+| `fontlab_<时间戳>.csv` | **字符图 → 汉字/码点/简繁对照表**。FontLab 按文件名识别；AI 字体工具（[高迪书法字库 AI 字体工具](https://github.com/gaudi1209/ai-font-tool)）按 CSV 读 label |
+| `fontlab_<时间戳>.source_map.json` | **`scaled_NNNN.png`（源切图名）→ 导出文件名** 的映射。下游 AI 工具按源切图名加载样本图时，用这表把样本对到 CSV 某一行 |
 
-**列结构**（CSV）：
+**CSV 列结构**：
 ```
 filename,unicode,character,simplified,traditional
 uni7684_02.png,U+7684,的,的,的
 ```
 
-- `filename` 唯一——同字多个样本会带 `_01/_02` 后缀（与图片导出共用同一套计数）。**重复 sample 不重复同名**，否则 25 张「的」落到磁盘互相覆盖，AI 训练样本从 320 跌到 152
+- `filename` 唯一——同字多个样本带 `_01/_02` 后缀。**重复 sample 不重复同名**，否则 25 张「的」落到磁盘互相覆盖，AI 训练样本从 320 跌到 152
 - `unicode` / `character` 用作 AI 训练的 label；`simplified` / `traditional` 是用户在 /annotate 框里填的内容（OCR 自动标注后保存到 ocr_annotations.json，重导时会自动填上）
 
-**关键约定**：CSV 文件名必须与磁盘实际图文件名**完全一致**。本工具图片导出和 CSV 导出共享一套 `char_counts` 计数器，所以**同字样本在两边都加相同后缀**，对得上号。
+**关键约定**：CSV 文件名必须与磁盘实际图文件名**完全一致**。本工具图片导出和 CSV 导出共享同一套 `char_counts` 计数器，**同字样本在两边都加相同后缀**，对得上号。
 
-**手工使用 FontLab 拼字体**：只需把 CSV + 所有 PNG 拖进 FontLab，按文件名识别，可不读 source_map。
-**AI 字体训练**：必须用 source_map 把 scaled/ 里的源切图改名/复制成导出文件名，再让训练脚本按 CSV 读 label。
+**两种用法**：
+
+- **手工用 FontLab 拼字体**：把子目录里所有 PNG + CSV 一起拖进 FontLab，按文件名识别，无需 source_map。
+- **AI 字体训练**：必须按 source_map 把 `scaled/` 里的源切图改名/复制成导出文件名，再让训练脚本按 CSV 读 label。
 
 ## 快速开始
 

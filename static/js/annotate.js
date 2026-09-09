@@ -1231,7 +1231,10 @@ async function exportImages() {
                     state.exportedDir = p.output_dir || outputDir;
                     elements.openDirBtn.disabled = false;
                     const errCount = (p.errors || []).length;
-                    showToast(`导出完成：${p.count} 张${errCount ? `（${errCount} 个错误）` : ''}`);
+                    // CSV + source_map 现在随「导出白底黑字」一起出在同子目录（PNG/CSV/source_map 三件套原子化）。
+                    // 让 toast 看到 CSV 行数，下游 AI 训练不用再手动点「导出 FontLab CSV」。
+                    const csvHint = p.csv_path ? `，CSV ${p.csv_row_count || '?'} 行` : '，CSV 未生成';
+                    showToast(`导出完成：${p.count} 张${csvHint}${errCount ? `（${errCount} 个错误）` : ''}`);
 
                     // 3. 清理中间文件
                     try {

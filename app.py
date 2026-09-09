@@ -924,7 +924,13 @@ def delete_characters():
     for fn in filenames:
         if not fn or '..' in fn or '/' in fn or '\\' in fn:  # 防路径穿越
             continue
+        # 字符文件可能在 output/{hash}/（原始 char_*.png）或 output/{hash}/scaled/（缩放后 scaled_*.png）
+        # 两个位置都试一次——前端只发文件名，路径由服务端解析
         fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
+        if not os.path.exists(fp):
+            scaled_fp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled', fn)
+            if os.path.exists(scaled_fp):
+                fp = scaled_fp
         if os.path.exists(fp):
             try:
                 os.remove(fp)
@@ -965,6 +971,11 @@ def open_path():
         return jsonify({'success': False, 'error': '非法文件名'}), 400
 
     fp = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+    # 缩放后的文件在 scaled/ 子目录，找不到就再试一次
+    if not os.path.exists(fp):
+        scaled_fp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled', filename)
+        if os.path.exists(scaled_fp):
+            fp = scaled_fp
     fp = os.path.abspath(fp)
     if not os.path.exists(fp):
         return jsonify({'success': False, 'error': '文件不存在'}), 404

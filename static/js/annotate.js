@@ -381,14 +381,23 @@ function createCharCard(char, index) {
 // 右键删除字符（无 confirm，由右键菜单直接调用；同时删本地文件 + session 条目）
 // 与 adjust.js 的 deleteCharacter 类似，但标注页保留「软删除」UX：卡片变灰 + 「已删除」遮罩
 // 标记 state.characters[index].deleted = true 避免 loadCharacters 的 !c.deleted 过滤把它再拉回来
+//
+// 注意：标注页加载的是 scaled_characters（来自 /api/get_scaled_results），
+// 字段是 processed_filename 而非 filename——必须回退。
 async function deleteCharacter(char, index) {
+    // 兼容两种数据：原始切割（filename）vs 缩放后（processed_filename）
+    const filename = char.processed_filename || char.filename;
+    if (!filename) {
+        showToast('删除失败：字符无文件名');
+        return;
+    }
     try {
         const r = await fetch('/api/delete_characters', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 hash: state.imageHash,
-                filenames: [char.filename]
+                filenames: [filename]
             })
         });
         const data = await r.json();
@@ -407,7 +416,7 @@ async function deleteCharacter(char, index) {
         card.style.pointerEvents = 'none';
     }
     updateUI();
-    showToast(`已删除 ${char.filename || '第' + (index + 1) + '号字符'}`);
+    showToast(`已删除 ${filename}`);
 }
 
 // 显示字符图片的右键菜单
@@ -438,21 +447,27 @@ function showCharContextMenu(x, y, char, index) {
     }
 
     // 点击菜单项：分发到删除/打开
+    // 兼容两种数据：原始切割（filename）vs 缩放后（processed_filename）
     menu.addEventListener('click', async (e) => {
         const action = e.target.dataset.action;
         hideCharContextMenu();
         if (action === 'delete') {
             deleteCharacter(char, index);
         } else if (action === 'open-folder') {
+            const filename = char.processed_filename || char.filename;
+            if (!filename) {
+                showToast('打开失败：字符无文件名');
+                return;
+            }
             try {
                 const r = await fetch('/api/open_path', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: char.filename, hash: state.imageHash })
+                    body: JSON.stringify({ path: filename, hash: state.imageHash })
                 });
                 const data = await r.json();
                 if (!data.success) throw new Error(data.error);
-                showToast(`已在资源管理器中打开 ${char.filename}`);
+                showToast(`已在资源管理器中打开 ${filename}`);
             } catch (err) {
                 showToast('打开失败: ' + err.message);
             }

@@ -1299,6 +1299,65 @@ def save_ocr_annotation(image_hash):
     return jsonify({'success': True})
 
 
+@app.route('/api/bulk_save_ocr_annotations/<image_hash>', methods=['POST'])
+def bulk_save_ocr_annotations(image_hash):
+    """批量保存人工标注
+
+    请求体: { annotations: { filename: simplified, ... } }
+    - 与 /api/save_ocr_annotation 一样写到 ocr_annotations.json（key=filename）
+    - 但 source 标记为 'manual'（人工标注），OCR 自动写的会被这条标记区分
+    - 一致并发安全（同进程内锁）
+
+    用途：用户跑 OCR 后手动校正几张卡，点「保存标注」按钮 → 把当前页
+    所有 simpInput.value 非空的卡写到磁盘。OCR 阶段已经实时写过
+    'ocr' 标记的记录，这里 'manual' 是补充——不会覆盖已有 manual。
+    """
+    from datetime import datetime
+    data = request.get_json() or {}
+    incoming = data.get('annotations') or {}
+    if not isinstance(incoming, dict):
+        return jsonify({'success': False, 'error': 'annotations 必须是 dict'}), 400
+
+    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    with _ocr_annotations_lock:
+        annotations = {}
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    annotations = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                print(f"[bulk_save_ocr_annotations] {image_hash} 读坏文件，按空处理")
+                annotations = {}
+
+        now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        for filename, simplified in incoming.items():
+            simplified = (simplified or '').strip()
+            if not filename:
+                continue
+            if not simplified:
+                # 空值 = 删除（用户主动清掉这张卡的标注）
+                annotations.pop(filename, None)
+                continue
+            existing = annotations.get(filename)
+            # 已存在的 manual 标注 → 不覆盖（用户可能后端手动改过）
+            if isinstance(existing, dict) and existing.get('source') == 'manual':
+                continue
+            annotations[filename] = {
+                'simplified': simplified,
+                'conf': existing.get('conf', 0.0) if isinstance(existing, dict) else 0.0,
+                'source': 'manual',
+                'updated_at': now,
+            }
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(annotations, f, ensure_ascii=False, indent=2)
+
+    saved = sum(1 for fn in incoming if incoming.get(fn))
+    print(f"[bulk_save_ocr_annotations] {image_hash}: 接收 {len(incoming)} 条, 实际写入 {saved} 条")
+    return jsonify({'success': True, 'received': len(incoming), 'saved': saved})
+
+
 @app.route('/api/get_ocr_annotations/<image_hash>', methods=['GET'])
 def get_ocr_annotations(image_hash):
     """获取这个 session 的所有 OCR 标注

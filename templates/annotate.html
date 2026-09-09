@@ -173,6 +173,21 @@
     cursor: not-allowed;
 }
 
+/* 保存标注按钮：莫兰迪绿（与 btn-success 同色系） */
+.btn-save-annot {
+    background-color: #7BA17B;
+    color: white;
+}
+
+.btn-save-annot:hover:not(:disabled) {
+    background-color: #688E68;
+}
+
+.btn-save-annot:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* OCR 阈值滑块 + 进度条 */
 .ocr-config {
     display: flex;
@@ -819,6 +834,7 @@ kbd {
         <button id="ocrFilterBtn" class="action-btn ocr-filter-btn" style="display: none;" title="只显示 OCR 自动填入的卡片（待复查）">
             🔍 只看待复查 (<span id="ocrFilterCount">0</span>)
         </button>
+        <button id="saveAnnotBtn" class="action-btn btn-save-annot" disabled title="把当前所有卡的人工标注写入 ocr_annotations.json（OCR 自动填的不需要重复保存）">💾 保存标注</button>
         <button id="clearBtn" class="action-btn btn-clear">清空</button>
         <div class="ocr-config" id="ocrConfig" style="display: none;">
             <label title="仅填入置信度 ≥ 此值的识别结果（书法 OCR 准确率低，建议 0.5+）">
@@ -898,5 +914,5 @@ kbd {
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=21"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=22"></script>
 {% endblock %}

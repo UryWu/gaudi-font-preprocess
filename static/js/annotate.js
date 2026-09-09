@@ -31,6 +31,7 @@ const elements = {
     openDirBtn: document.getElementById('openDirBtn'),
     annotateBtn: document.getElementById('annotateBtn'),
     ocrAnnotateBtn: document.getElementById('ocrAnnotateBtn'),
+    saveAnnotBtn: document.getElementById('saveAnnotBtn'),
     ocrConfig: document.getElementById('ocrConfig'),
     ocrThreshold: document.getElementById('ocrThreshold'),
     ocrThresholdValue: document.getElementById('ocrThresholdValue'),
@@ -94,6 +95,7 @@ function setupEventListeners() {
     // 标注按钮
     elements.annotateBtn.addEventListener('click', startAnnotate);
     elements.ocrAnnotateBtn.addEventListener('click', ocrAutoAnnotate);
+    elements.saveAnnotBtn.addEventListener('click', saveManualAnnotations);
     elements.ocrFilterBtn.addEventListener('click', toggleOcrFilter);
     elements.clearBtn.addEventListener('click', clearInputs);
 
@@ -434,6 +436,55 @@ function saveOcrAnnotation(filename, simplified, opts) {
     }).catch(err => console.warn('保存 OCR 标注失败:', err));
 }
 
+// 批量保存人工标注
+// 用途：用户跑 OCR 后手动校正了几张卡，点「保存标注」按钮 → 把当前页所有
+// simpInput.value 非空的卡写到 ocr_annotations.json（标记 source='manual'）。
+// 后端不覆盖已有的 manual 标注——保护已手动调整的卡。
+async function saveManualAnnotations() {
+    if (!state.imageHash) return;
+    const annotations = {};
+    const cards = document.querySelectorAll('.char-card');
+    let nonEmpty = 0;
+    // 遍历所有卡，取每张卡对应的 filename（与 loadOcrAnnotations 同规则）
+    cards.forEach((card, idx) => {
+        const simpInput = card.querySelector('.simplified-input');
+        if (!simpInput) return;
+        const char = (simpInput.value || '').trim();
+        if (!char) return;   // 空卡跳过
+        const charObj = state.characters[idx];
+        if (!charObj) return;
+        const fnKey = charObj.processed_filename || charObj.filename;
+        if (!fnKey) return;
+        annotations[fnKey] = char;
+        nonEmpty++;
+    });
+    if (nonEmpty === 0) {
+        showToast('没有需要保存的标注');
+        return;
+    }
+    elements.saveAnnotBtn.disabled = true;
+    const prev = elements.saveAnnotBtn.textContent;
+    elements.saveAnnotBtn.textContent = '保存中…';
+    try {
+        const resp = await fetch(`/api/bulk_save_ocr_annotations/${state.imageHash}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ annotations })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`已保存 ${data.saved} 张人工标注（OCR 自动填的原本已存，无需重复）`);
+        } else {
+            showToast('保存失败: ' + (data.error || '未知错误'));
+        }
+    } catch (err) {
+        showToast('保存失败: ' + err.message);
+    } finally {
+        elements.saveAnnotBtn.textContent = prev;
+        updateUI();
+    }
+}
+
 // 传统书法顺序：从上到下，从右到左
 function getTraditionalOrder(characters) {
     return [...characters].sort((a, b) => {
@@ -463,6 +514,8 @@ function updateUI() {
     elements.csvBtn.disabled = activeCount === 0;
     // OCR 按钮：有字符时启用（无 task 正在跑时）
     elements.ocrAnnotateBtn.disabled = activeCount === 0 || !!ocrState.taskId;
+    // 保存标注按钮：有字符时启用
+    elements.saveAnnotBtn.disabled = activeCount === 0;
     // OCR 配置面板：只在有字符时显示
     if (elements.ocrConfig) {
         elements.ocrConfig.style.display = activeCount > 0 ? 'flex' : 'none';

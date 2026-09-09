@@ -142,22 +142,43 @@ _rapidocr_engine = None
 
 
 def _get_rapidocr():
-    """懒加载 RapidOCR（首次 ~10s 含模型下载）"""
+    """懒加载 RapidOCR（首次 ~10s 含模型下载）
+
+    自动选最快的可用 provider：
+    - TensorrtExecutionProvider（最贵但最快，需要单独装 TensorRT）
+    - CUDAExecutionProvider（GPU 加速，需 onnxruntime-gpu + cuDNN）
+    - CPUExecutionProvider（兜底，永远可用）
+
+    RapidOCR 内部 try 每个 provider 顺序，第一个成功初始化的用。
+    即使列表里加了 GPU，cuDNN 加载失败也会自动降级到 CPU，不会崩。
+    """
     global _rapidocr_engine
     if _rapidocr_engine is None:
         from rapidocr_onnxruntime import RapidOCR
-        # Rec.lang='ch'：中英双语识别模型
-        # Det.lang='ch'：中文检测模型
-        # use_det=True / use_cls=True / use_rec=True：全流程
-        # intra_op_num_threads：ONNX 推理线程数（默认 = CPU 核数，显式设更稳）
+        # 按速度从高到低排，RapidOCR 内部 try 顺序
+        providers = ['CPUExecutionProvider']  # 必带兜底
+        try:
+            import onnxruntime as ort
+            avail = ort.get_available_providers()
+            for p in ('TensorrtExecutionProvider', 'CUDAExecutionProvider'):
+                if p in avail:
+                    providers.insert(0, p)   # 最快的放最前
+            if 'CUDAExecutionProvider' in avail:
+                print(f"[OCR] GPU 加速可用，providers={providers}")
+            else:
+                print(f"[OCR] 仅 CPU（未检测到 GPU provider），providers={providers}")
+        except ImportError:
+            pass
+
         _rapidocr_engine = RapidOCR(
             params={
                 'Rec.lang': 'ch',
                 'Det.lang': 'ch',
                 'Det.use_dilation': False,
                 'Det.box_thresh': 0.3,
-                'intra_op_num_threads': 8,   # 多线程并行
+                'intra_op_num_threads': 8,
                 'inter_op_num_threads': 4,
+                'providers': providers,
             }
         )
     return _rapidocr_engine

@@ -501,7 +501,7 @@ function createCharCard(char, index) {
     // 否则 /output/<path:filename> 路由的 Cache-Control: max-age=31536000, immutable
     // 会让浏览器一直拿旧的图：磁盘上 scaled_*.png 被 process_scale / save_scaled 覆盖后，
     // 用户在 /annotate 看到的图与右键「打开图片位置」打开的文件内容不一致。
-    const imageUrl = (char.processed_url || char.image_url || `/output/${state.imageHash}/${char.filename}`) + '?t=' + Date.now();
+    const imageUrl = (char.processed_url || char.image_url || `/output/${state.imageHash}/cutting_output/${char.filename}`) + '?t=' + Date.now();
     const filename = char.filename || char.processed_filename || 'unknown';
 
     console.log(`创建卡片 ${index}: filename=${filename}, imageUrl=${imageUrl}`);

@@ -365,7 +365,7 @@ function createCharCard(char, displayIndex) {
     img.className = 'char-image';
     // 兼容老数据：image_url 缺失时根据 hash + filename 构造
     // 追加时间戳防止浏览器缓存重剪后的同名 PNG
-    const baseUrl = char.image_url || `/output/${state.imageHash}/${char.filename}`;
+    const baseUrl = char.image_url || `/output/${state.imageHash}/cutting_output/${char.filename}`;
     img.src = `${baseUrl}?v=${char.cache_version || 0}`;
     img.title = char.filename || '';
     img.alt = `字符 ${displayIndex + 1}`;
@@ -452,7 +452,7 @@ function reloadOneCharCard(char) {
     // 找图标签，更新 src（用最新 cache_version 重新加载）
     const img = card.querySelector('img.char-image');
     if (img) {
-        const baseUrl = char.image_url || `/output/${state.imageHash}/${char.filename}`;
+        const baseUrl = char.image_url || `/output/${state.imageHash}/cutting_output/${char.filename}`;
         img.src = `${baseUrl}?v=${char.cache_version || 0}&t=${Date.now()}`;
     }
     // 状态标签：把旧的「已调整」/「需调整」badge 移除（已调整完）

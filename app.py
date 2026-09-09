@@ -36,6 +36,32 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
 
+# 切割产物子目录：data/sessions/<hash>/cutting_output/
+# 与 scaled/ 平级——一个放 char_*.png（切割图），一个放 scaled_*.png（缩放后）
+# 之前代码把 char_*.png 直接放 session 根目录，现统一到子目录避免污染 session 根
+CHAR_DIR_NAME = 'cutting_output'
+
+
+def char_dir(image_hash: str) -> str:
+    """切割产物目录（data/sessions/<hash>/cutting_output/）"""
+    return os.path.join(OUTPUT_FOLDER, image_hash, CHAR_DIR_NAME)
+
+
+def _normalize_char_urls(characters, image_hash):
+    """把旧 session 里存的 image_url（指向 session 根 char_*.png）重写到 cutting_output/
+
+    迁移后 char_*.png 从 session 根挪到 cutting_output/，但老 session.json
+    里 characters 的 image_url 还是旧路径 /output/<hash>/char_XXXX.png（会 404）。
+    这里对每个字符做幂等改写：若 image_url 没含 /cutting_output/ 且是 char_*.png，
+    就换成新路径。返回原列表（原地修改）。"""
+    for c in characters or []:
+        url = c.get('image_url') or ''
+        fn = c.get('filename') or ''
+        if url and '/cutting_output/' not in url and fn and fn.startswith('char_'):
+            c['image_url'] = f'/output/{image_hash}/{CHAR_DIR_NAME}/{fn}'
+    return characters
+
+
 @app.route('/')
 def index():
     """首页 - 重定向到切割布局页面"""
@@ -380,8 +406,8 @@ def api_list_sessions():
         chars = session_data.get('characters', [])
         # 是否有有效坐标（x>0 或 y>0 的字符）
         has_coords = any(c.get('x', 0) > 0 or c.get('y', 0) > 0 for c in chars)
-        # 是否已有 output 目录
-        out_dir = os.path.join(OUTPUT_FOLDER, h)
+        # 是否已有 cutting_output 目录
+        out_dir = char_dir(h)
         out_files = 0
         if os.path.isdir(out_dir):
             out_files = sum(1 for f in os.listdir(out_dir)
@@ -456,7 +482,7 @@ def apply_cuts():
     img = load_image(processed_path)
 
     # 创建输出目录
-    output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
+    output_dir = char_dir(image_hash)
     os.makedirs(output_dir, exist_ok=True)
 
     # 收集所有候选切割区域（含来源标记）
@@ -524,7 +550,7 @@ def apply_cuts():
         cut_images.append({
             'index': idx,
             'filename': piece_filename,
-            'image_url': f'/output/{image_hash}/{piece_filename}',
+            'image_url': f'/output/{image_hash}/{CHAR_DIR_NAME}/{piece_filename}',
             'x': x1, 'y': y1,
             'width': x2 - x1,
             'height': y2 - y1,
@@ -561,7 +587,7 @@ def get_cut_results(image_hash):
     characters = session_data.get('characters', [])
     has_valid_coords = characters and any(c.get('x', 0) > 0 or c.get('y', 0) > 0 for c in characters)
 
-    output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
+    output_dir = char_dir(image_hash)
 
     # 如果没有有效的坐标数据，需要重新生成
     if not has_valid_coords:
@@ -601,7 +627,7 @@ def get_cut_results(image_hash):
                         'strip_index': strip_index,
                         'char_index': i,
                         'filename': piece_filename,
-                        'image_url': f'/output/{image_hash}/{piece_filename}',
+                        'image_url': f'/output/{image_hash}/{CHAR_DIR_NAME}/{piece_filename}',
                         'x': x_start, 'y': y1,
                         'width': x_end - x_start,
                         'height': y2 - y1,
@@ -631,7 +657,7 @@ def get_cut_results(image_hash):
                         'strip_index': j,
                         'char_index': i,
                         'filename': piece_filename,
-                        'image_url': f'/output/{image_hash}/{piece_filename}',
+                        'image_url': f'/output/{image_hash}/{CHAR_DIR_NAME}/{piece_filename}',
                         'x': x1, 'y': y1,
                         'width': x2 - x1,
                         'height': y2 - y1,
@@ -645,6 +671,8 @@ def get_cut_results(image_hash):
         session_data['characters'] = characters
         save_session(image_hash, session_data, DATA_FOLDER)
 
+    # 旧 session 里 image_url 可能还指向 session 根（迁移前），规范化到 cutting_output/
+    _normalize_char_urls(characters, image_hash)
     return jsonify({
         'success': True,
         'characters': characters,
@@ -678,7 +706,7 @@ def clear_empty_chars():
             # 删除磁盘文件
             filename = c.get('filename')
             if filename:
-                file_path = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+                file_path = os.path.join(char_dir(image_hash), filename)
                 if os.path.exists(file_path):
                     try:
                         os.remove(file_path)
@@ -699,15 +727,15 @@ def clear_empty_chars():
         old_filename = c.get('filename')
         new_filename = f"char_{new_idx:04d}.png"
         if old_filename != new_filename:
-            old_path = os.path.join(OUTPUT_FOLDER, image_hash, old_filename)
-            new_path = os.path.join(OUTPUT_FOLDER, image_hash, new_filename)
+            old_path = os.path.join(char_dir(image_hash), old_filename)
+            new_path = os.path.join(char_dir(image_hash), new_filename)
             if os.path.exists(old_path):
                 try:
                     os.rename(old_path, new_path)
                 except Exception as e:
                     print(f"重命名失败 {old_filename} -> {new_filename}: {e}")
             c['filename'] = new_filename
-            c['image_url'] = f'/output/{image_hash}/{new_filename}'
+            c['image_url'] = f'/output/{image_hash}/{CHAR_DIR_NAME}/{new_filename}'
             c['index'] = new_idx
 
     # 写回 session
@@ -735,7 +763,7 @@ def clear_all_data():
         return jsonify({'success': False, 'error': '缺少图片哈希'}), 400
 
     # 删除 output 目录
-    output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
+    output_dir = char_dir(image_hash)
     if os.path.exists(output_dir):
         try:
             shutil.rmtree(output_dir)
@@ -789,7 +817,7 @@ def save_adjustments():
         return jsonify({'error': '会话不存在'}), 404
 
     # 按 adjust 值实际重剪 PNG 文件
-    output_dir = os.path.join(OUTPUT_FOLDER, image_hash)
+    output_dir = char_dir(image_hash)
     recropped = 0
     painted = 0
     for char in characters:
@@ -927,9 +955,9 @@ def delete_characters():
     for fn in filenames:
         if not fn or '..' in fn or '/' in fn or '\\' in fn:  # 防路径穿越
             continue
-        # 字符文件可能在 output/{hash}/（原始 char_*.png）或 output/{hash}/scaled/（缩放后 scaled_*.png）
+        # 字符文件可能在 cutting_output/（char_*.png）或 scaled/（scaled_*.png）
         # 两个位置都试一次——前端只发文件名，路径由服务端解析
-        fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
+        fp = os.path.join(char_dir(image_hash), fn)
         if not os.path.exists(fp):
             scaled_fp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled', fn)
             if os.path.exists(scaled_fp):
@@ -973,7 +1001,7 @@ def open_path():
     if not filename or '..' in filename or '/' in filename or '\\' in filename:
         return jsonify({'success': False, 'error': '非法文件名'}), 400
 
-    fp = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+    fp = os.path.join(char_dir(image_hash), filename)
     # 缩放后的文件在 scaled/ 子目录，找不到就再试一次
     if not os.path.exists(fp):
         scaled_fp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled', filename)
@@ -1036,7 +1064,7 @@ def process_scale():
                     print(f"字符 {i} 缺少 filename 字段: {char}")
                     continue
 
-                original_path = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+                original_path = os.path.join(char_dir(image_hash), filename)
                 if not os.path.exists(original_path):
                     print(f"文件不存在: {original_path}")
                     continue
@@ -1144,7 +1172,7 @@ def save_scaled():
                 filename = char.get('original_filename') or char.get('filename', '')
                 if not filename:
                     continue
-                original_path = os.path.join(OUTPUT_FOLDER, image_hash, filename)
+                original_path = os.path.join(char_dir(image_hash), filename)
                 if not os.path.exists(original_path):
                     print(f"save_scaled 重生成：文件不存在 {original_path}")
                     continue
@@ -1271,13 +1299,18 @@ def cleanup_intermediate():
         return jsonify({'success': True, 'message': '目录不存在，无需清理'})
 
     cleaned = []
-    # 清理切割后的原始文件 (char_XXXX.png)
+    # 清理切割后的原始文件 (char_XXXX.png 在 cutting_output/ 下)
+    char_output = os.path.join(base_dir, CHAR_DIR_NAME)
+    if os.path.isdir(char_output):
+        for f in os.listdir(char_output):
+            fpath = os.path.join(char_output, f)
+            if os.path.isfile(fpath) and f.startswith('char_') and f.endswith('.png'):
+                os.remove(fpath)
+                cleaned.append(f)
+    # 遍历 session 根的其他目录
     for f in os.listdir(base_dir):
         fpath = os.path.join(base_dir, f)
-        if os.path.isfile(fpath) and f.startswith('char_') and f.endswith('.png'):
-            os.remove(fpath)
-            cleaned.append(f)
-        elif os.path.isdir(fpath):
+        if os.path.isdir(fpath):
             dirname = f.lower()
             # 清理 scaled 目录
             if dirname == 'scaled':
@@ -1349,6 +1382,10 @@ def get_scaled_results(image_hash):
         characters = session_data.get('characters', [])
 
     output_dir = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled')
+
+    # 若无 scaled_characters 走了 characters 兜底，需规范化旧 image_url
+    # （scaled_characters 用的是 processed_url 字段，normalize 不会误伤）
+    _normalize_char_urls(characters, image_hash)
 
     return jsonify({
         'success': True,
@@ -1458,21 +1495,32 @@ def export_annotated():
             for ann in annotations:
                 err = None
                 try:
-                    # 1. 尝试原始文件名
+                    # 1. 尝试原始文件名（cutting_output/ 优先，兼容老数据在 session 根）
                     src_path = None
                     if ann.get('filename'):
-                        sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
+                        # scaled_*.png 直接放 session 根；char_*.png 在 cutting_output/
+                        if ann['filename'].startswith('scaled_'):
+                            sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
+                        else:
+                            sp = os.path.join(char_dir(image_hash), ann['filename'])
                         if os.path.exists(sp):
                             src_path = sp
+                        else:
+                            # 老数据回退：session 根
+                            sp2 = os.path.join(OUTPUT_FOLDER, image_hash, ann['filename'])
+                            if os.path.exists(sp2):
+                                src_path = sp2
                     # 2. 尝试 scaled 目录（用 index 推断）
                     if not src_path:
                         sp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled',
                                            f"scaled_{ann['index']:04d}.png")
                         if os.path.exists(sp):
                             src_path = sp
-                    # 3. 尝试 original_filename
+                    # 3. 尝试 original_filename（同样 cutting_output/ 优先）
                     if not src_path and ann.get('original_filename'):
-                        sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['original_filename'])
+                        sp = os.path.join(char_dir(image_hash), ann['original_filename'])
+                        if not os.path.exists(sp):
+                            sp = os.path.join(OUTPUT_FOLDER, image_hash, ann['original_filename'])
                         if os.path.exists(sp):
                             src_path = sp
 
@@ -1842,16 +1890,20 @@ def ocr_start():
             print(f"[OCR {task_id}] 开始处理 {len(filenames)} 张 (threshold={threshold}, use_scaled={use_scaled})")
             for fn in filenames:
                 t0 = time.time()
-                # 路径解析（与 /api/open_path 一致：先 OUTPUT_FOLDER/hash/，再 scaled/）
+                # 路径解析（与 /api/open_path 一致：先 scaled/，再 cutting_output/，回退 session 根）
                 if not fn or '..' in fn or '/' in fn or '\\' in fn:
                     result = {'filename': fn, 'character': '', 'confidence': 0, 'error': '非法文件名'}
                 else:
                     if use_scaled:
                         fp = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled', fn)
                         if not os.path.exists(fp):
+                            fp = os.path.join(char_dir(image_hash), fn)
+                        if not os.path.exists(fp):
                             fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
                     else:
-                        fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
+                        fp = os.path.join(char_dir(image_hash), fn)
+                        if not os.path.exists(fp):
+                            fp = os.path.join(OUTPUT_FOLDER, image_hash, fn)
                     if not os.path.exists(fp):
                         result = {'filename': fn, 'character': '', 'confidence': 0, 'error': '文件不存在'}
                     else:

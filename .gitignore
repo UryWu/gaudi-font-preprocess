@@ -3,6 +3,7 @@ __pycache__/
 .playwright-cli/
 data/sessions/
 input/
+output/                # 老的图片输出位置（仅留 backup/ 历史数据，新数据已迁到 data/sessions/）
 static/uploads/
 my_font/
 *.pyc

@@ -190,12 +190,41 @@
 <!-- 浮动按钮：回到顶部 / 到底部 -->
 <!-- 仅在有字符时显示，由 adjust.js 的 updateFloatBtns 控制 -->
 <div class="adjust-floating-btns" id="adjustFloatingBtns" style="display: none;">
-    <button class="float-btn" id="floatTopBtn" title="回到顶部" type="button">↑</button>
-    <button class="float-btn" id="floatBottomBtn" title="到底部" type="button">↓</button>
+    <button class="float-btn" id="floatTopBtn" title="回到顶部 (Home)" type="button">↑</button>
+    <button class="float-btn" id="floatBottomBtn" title="到底部 (End)" type="button">↓</button>
+</div>
+
+<!-- 键盘快捷键帮助 modal：按 ? 弹出 -->
+<div class="shortcut-help-modal" id="shortcutHelpModal" hidden>
+    <div class="shortcut-help-backdrop"></div>
+    <div class="shortcut-help-content">
+        <div class="shortcut-help-header">
+            <h3>键盘快捷键</h3>
+            <button class="shortcut-help-close" id="shortcutHelpClose" title="关闭 (Esc)">✕</button>
+        </div>
+        <div class="shortcut-help-body">
+            <div class="shortcut-group">
+                <h4>导航</h4>
+                <div class="shortcut-row"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd><span>卡片间移动焦点</span></div>
+                <div class="shortcut-row"><kbd>Home</kbd> <kbd>End</kbd><span>第一个 / 最后一个卡</span></div>
+                <div class="shortcut-row"><kbd>Enter</kbd><span>打开焦点卡的调整 modal</span></div>
+            </div>
+            <div class="shortcut-group">
+                <h4>画笔（modal 内）</h4>
+                <div class="shortcut-row"><kbd>Ctrl</kbd><span>按住进入画笔模式</span></div>
+                <div class="shortcut-row"><kbd>Esc</kbd><span>退出画笔模式</span></div>
+                <div class="shortcut-row"><kbd>Enter</kbd><span>确认当前调整</span></div>
+            </div>
+            <div class="shortcut-group">
+                <h4>其它</h4>
+                <div class="shortcut-row"><kbd>?</kbd><span>显示本帮助</span></div>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=18"></script>
-<script src="{{ url_for('static', filename='js/adjust.js') }}?v=23"></script>
+<script src="{{ url_for('static', filename='js/adjust.js') }}?v=24"></script>
 {% endblock %}

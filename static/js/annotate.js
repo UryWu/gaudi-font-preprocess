@@ -39,7 +39,13 @@ const elements = {
     ocrProgressText: document.getElementById('ocrProgressText'),
     ocrFilterBtn: document.getElementById('ocrFilterBtn'),
     ocrFilterCount: document.getElementById('ocrFilterCount'),
-    clearBtn: document.getElementById('clearBtn')
+    clearBtn: document.getElementById('clearBtn'),
+    cardSearchBar: document.getElementById('cardSearchBar'),
+    cardSearchInput: document.getElementById('cardSearchInput'),
+    cardSearchCount: document.getElementById('cardSearchCount'),
+    cardSearchClear: document.getElementById('cardSearchClear'),
+    shortcutHelpModal: document.getElementById('shortcutHelpModal'),
+    shortcutHelpClose: document.getElementById('shortcutHelpClose'),
 };
 
 // OCR 状态
@@ -51,6 +57,21 @@ let ocrState = {
     lowConf: 0,             // 低置信填入数
     threshold: 0.5,         // 当前阈值
     filterOnly: false,      // 「只看待复查」是否激活
+};
+
+// 搜索状态
+let searchState = {
+    query: '',              // 当前搜索词
+    rangeStart: null,       // index 范围：起始（1-based）
+    rangeEnd: null,         // index 范围：结束
+    utfPrefix: null,        // UTF 码前缀
+    charMatch: null,        // 字符匹配
+    filterActive: false,    // 是否有任何过滤条件
+};
+
+// 键盘焦点状态
+let keyboardState = {
+    focusedIndex: -1,       // 当前键盘焦点卡片的 state.characters index
 };
 
 // 初始化
@@ -98,6 +119,24 @@ function setupEventListeners() {
             elements.inputCount.textContent = Array.from(cleaned).length;
         }, 300);
     });
+
+    // 搜索框：实时过滤
+    elements.cardSearchInput.addEventListener('input', (e) => {
+        applySearch(e.target.value);
+    });
+    elements.cardSearchClear.addEventListener('click', () => {
+        elements.cardSearchInput.value = '';
+        applySearch('');
+        elements.cardSearchInput.focus();
+    });
+
+    // 快捷键帮助 modal
+    elements.shortcutHelpClose.addEventListener('click', hideShortcutHelp);
+    // 点击背景关闭
+    if (elements.shortcutHelpModal) {
+        const backdrop = elements.shortcutHelpModal.querySelector('.shortcut-help-backdrop');
+        if (backdrop) backdrop.addEventListener('click', hideShortcutHelp);
+    }
 
     // 繁简输入联动（带去标点和防抖）
     let simpDebounceTimer;
@@ -320,6 +359,10 @@ function updateUI() {
     // OCR 配置面板：只在有字符时显示
     if (elements.ocrConfig) {
         elements.ocrConfig.style.display = activeCount > 0 ? 'flex' : 'none';
+    }
+    // 搜索栏：有字符才显示
+    if (elements.cardSearchBar) {
+        elements.cardSearchBar.style.display = activeCount > 0 ? 'flex' : 'none';
     }
     // 同步 OCR 过滤按钮的可见性 + 计数
     updateOcrFilterButton();
@@ -1093,4 +1136,322 @@ function ocrReset() {
         elements.ocrProgress.style.display = 'none';
     }
     updateUI();
+}
+
+// === 搜索 / 过滤 ===
+// 支持三种过滤（可组合）：
+//   1. 字符：输入「中」匹配所有卡（simplified 或 traditional 含「中」字）
+//   2. UTF 码：输入「U+4E2D」或「4E2D」匹配 U+4E2D 的卡
+//   3. Index 范围：输入「1-50」或「42」匹配 1-50 或第 42 张
+// 多条件用空格分隔（AND 关系）
+//
+// 例：
+//   "中"            → 含「中」字的卡
+//   "4E2D"          → U+4E2D
+//   "1-50"          → 前 50 张
+//   "中 1-50"       → 前 50 张里含「中」字的
+function applySearch(query) {
+    searchState.query = (query || '').trim();
+    searchState.rangeStart = null;
+    searchState.rangeEnd = null;
+    searchState.utfPrefix = null;
+    searchState.charMatch = null;
+    searchState.filterActive = false;
+
+    if (!searchState.query) {
+        // 无搜索：清掉所有搜索高亮 + 隐藏样式
+        applySearchFilter();
+        updateSearchCount();
+        return;
+    }
+
+    // 解析每个 token
+    const tokens = searchState.query.split(/\s+/);
+    for (const tok of tokens) {
+        // index 范围: 1-50
+        const rangeMatch = tok.match(/^(\d+)\s*-\s*(\d+)$/);
+        if (rangeMatch) {
+            searchState.rangeStart = parseInt(rangeMatch[1], 10);
+            searchState.rangeEnd = parseInt(rangeMatch[2], 10);
+            searchState.filterActive = true;
+            continue;
+        }
+        // 单 index: 42
+        const indexMatch = tok.match(/^\d+$/);
+        if (indexMatch) {
+            const n = parseInt(tok, 10);
+            searchState.rangeStart = n;
+            searchState.rangeEnd = n;
+            searchState.filterActive = true;
+            continue;
+        }
+        // UTF 码: U+4E2D 或 4E2D
+        const utfMatch = tok.match(/^(?:U\+|u\+|u)?([0-9a-fA-F]{4,5})$/);
+        if (utfMatch) {
+            searchState.utfPrefix = utfMatch[1].toUpperCase();
+            searchState.filterActive = true;
+            continue;
+        }
+        // 字符：直接用
+        searchState.charMatch = tok;
+        searchState.filterActive = true;
+    }
+
+    applySearchFilter();
+    updateSearchCount();
+}
+
+// 应用搜索过滤到所有卡
+function applySearchFilter() {
+    if (!elements.cardGrid) return;
+    const cards = elements.cardGrid.querySelectorAll('.char-card');
+    cards.forEach(card => {
+        const idx = parseInt(card.dataset.index, 10);
+        const char = state.characters[idx];
+        if (!char) return;
+        const visible = isCharMatchSearch(char, idx);
+        // 注意：search 过滤用 .filter-hidden，OCR 过滤也用 .filter-hidden
+        // 两者是 AND 关系——只要任一隐藏就隐藏
+        if (searchState.filterActive && !visible) {
+            card.classList.add('filter-hidden');
+        } else {
+            // 不被搜索隐藏；检查 OCR 过滤
+            const isOcrFilled = card.classList.contains('ocr-filled');
+            const ocrHidden = ocrState.filterOnly && !isOcrFilled;
+            card.classList.toggle('filter-hidden', ocrHidden);
+        }
+    });
+}
+
+// 判断某字符卡是否匹配当前搜索条件
+function isCharMatchSearch(char, idx) {
+    if (!searchState.filterActive) return true;
+    const displayIdx = idx + 1;  // 1-based
+
+    // index 范围
+    if (searchState.rangeStart != null) {
+        if (displayIdx < searchState.rangeStart || displayIdx > searchState.rangeEnd) {
+            return false;
+        }
+    }
+    // UTF 码
+    if (searchState.utfPrefix) {
+        const code = (char.simplified || char.traditional || '').codePointAt(0);
+        if (code === undefined) return false;
+        const hex = code.toString(16).toUpperCase().padStart(code > 0xFFFF ? 5 : 4, '0');
+        if (!hex.startsWith(searchState.utfPrefix)) return false;
+    }
+    // 字符
+    if (searchState.charMatch) {
+        const s = char.simplified || '';
+        const t = char.traditional || '';
+        if (!s.includes(searchState.charMatch) && !t.includes(searchState.charMatch)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 更新搜索计数显示
+function updateSearchCount() {
+    if (!elements.cardSearchCount) return;
+    const total = state.characters.length;
+    if (!searchState.filterActive) {
+        elements.cardSearchCount.textContent = `${total} 张`;
+        return;
+    }
+    const visible = state.characters.filter((c, i) => isCharMatchSearch(c, i)).length;
+    elements.cardSearchCount.textContent = `${visible}/${total}`;
+}
+
+// === 键盘快捷键 ===
+// 设计：监听 document keydown，根据当前焦点分发
+//   - 焦点在 input/textarea：除 Esc 外不拦截（让用户正常打字）
+//   - 焦点在搜索框：/ 重新聚焦，Esc 清空
+//   - 其它情况：方向键移动卡焦点，Enter 编辑，/ 搜索，? 帮助，Esc 取消
+//
+// 卡焦点：state.characters 的 index（不是 grid 位置）
+//   移动逻辑：方向键按 grid 列数（CSS grid auto-fill 估算）跳转
+document.addEventListener('keydown', (e) => {
+    // 帮助 modal 打开时：Esc 关闭，其它不拦截
+    if (elements.shortcutHelpModal && !elements.shortcutHelpModal.hidden) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            hideShortcutHelp();
+        }
+        return;
+    }
+
+    const tag = (e.target && e.target.tagName) || '';
+    const inTextInput = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+    const inSearchInput = e.target === elements.cardSearchInput;
+
+    // 搜索框内：Esc 清空搜索，/ 不再二次聚焦
+    if (inSearchInput) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            elements.cardSearchInput.value = '';
+            applySearch('');
+            elements.cardSearchInput.blur();
+        }
+        return;
+    }
+
+    // 文本输入：只拦截 Esc
+    if (inTextInput) {
+        return;
+    }
+
+    // 方向键：移动卡焦点
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' ||
+        e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        moveKeyboardFocus(e.key);
+        return;
+    }
+
+    // Enter：焦点卡 → 编辑第一个输入框
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (keyboardState.focusedIndex >= 0) {
+            e.preventDefault();
+            focusCardInput(keyboardState.focusedIndex);
+        }
+        return;
+    }
+
+    // /：聚焦搜索框
+    if (e.key === '/') {
+        e.preventDefault();
+        elements.cardSearchInput.focus();
+        elements.cardSearchInput.select();
+        return;
+    }
+
+    // ?：显示帮助（shift+/ 在大多数键盘上）
+    if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+        e.preventDefault();
+        showShortcutHelp();
+        return;
+    }
+
+    // Esc：清空搜索（如有）+ 清焦点
+    if (e.key === 'Escape') {
+        if (searchState.query) {
+            elements.cardSearchInput.value = '';
+            applySearch('');
+        }
+        if (keyboardState.focusedIndex >= 0) {
+            clearKeyboardFocus();
+        }
+        return;
+    }
+});
+
+// 移动键盘焦点
+// grid 是 CSS auto-fill minmax(180px, 1fr)，实际列数 = container.width / 180
+// 用 grid.offsetWidth 估算（去掉 padding 16px*2）
+function moveKeyboardFocus(direction) {
+    if (state.characters.length === 0) return;
+    const cols = getGridColumnCount();
+    const cur = keyboardState.focusedIndex;
+    let next = cur;
+    if (cur < 0) {
+        // 还没焦点：定位到第一个可见卡
+        next = firstVisibleIndex();
+    } else {
+        if (direction === 'ArrowLeft')  next = Math.max(0, cur - 1);
+        if (direction === 'ArrowRight') next = Math.min(state.characters.length - 1, cur + 1);
+        if (direction === 'ArrowUp')    next = Math.max(0, cur - cols);
+        if (direction === 'ArrowDown')  next = Math.min(state.characters.length - 1, cur + cols);
+    }
+    setKeyboardFocus(next);
+}
+
+// 估算 grid 列数
+function getGridColumnCount() {
+    if (!elements.cardGrid) return 5;
+    const w = elements.cardGrid.clientWidth;
+    // minmax(180px, 1fr) + gap 15px
+    return Math.max(1, Math.floor((w + 15) / (180 + 15)));
+}
+
+// 第一个未被隐藏的卡 index
+function firstVisibleIndex() {
+    for (let i = 0; i < state.characters.length; i++) {
+        const card = elements.cardGrid.querySelector(`.char-card[data-index="${i}"]`);
+        if (card && !card.classList.contains('filter-hidden')) return i;
+    }
+    return 0;
+}
+
+// 下一个可见卡（用于焦点移动后跳过隐藏卡）
+function nextVisibleIndex(target) {
+    if (target < 0) target = 0;
+    // 先尝试 target，再向后扫
+    for (let i = target; i < state.characters.length; i++) {
+        const card = elements.cardGrid.querySelector(`.char-card[data-index="${i}"]`);
+        if (card && !card.classList.contains('filter-hidden')) return i;
+    }
+    // 向前扫
+    for (let i = target - 1; i >= 0; i--) {
+        const card = elements.cardGrid.querySelector(`.char-card[data-index="${i}"]`);
+        if (card && !card.classList.contains('filter-hidden')) return i;
+    }
+    return -1;
+}
+
+// 设置键盘焦点
+function setKeyboardFocus(idx) {
+    // 跳过隐藏的卡
+    const visible = nextVisibleIndex(idx);
+    if (visible < 0) return;
+    clearKeyboardFocus();
+    keyboardState.focusedIndex = visible;
+    const card = elements.cardGrid.querySelector(`.char-card[data-index="${visible}"]`);
+    if (card) {
+        card.classList.add('keyboard-focused');
+        // 滚到可见
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+}
+
+// 清除键盘焦点
+function clearKeyboardFocus() {
+    if (keyboardState.focusedIndex < 0) return;
+    const card = elements.cardGrid.querySelector(`.char-card[data-index="${keyboardState.focusedIndex}"]`);
+    if (card) card.classList.remove('keyboard-focused');
+    keyboardState.focusedIndex = -1;
+}
+
+// 焦点卡 → 聚焦第一个 input
+function focusCardInput(idx) {
+    const card = elements.cardGrid.querySelector(`.char-card[data-index="${idx}"]`);
+    if (!card) return;
+    const input = card.querySelector('.simplified-input');
+    if (input) {
+        input.focus();
+        input.select();
+    }
+}
+
+// 卡片被点击时同步键盘焦点（让方向键从点击的卡开始）
+// 通过事件代理加在 grid 上
+if (elements.cardGrid) {
+    elements.cardGrid.addEventListener('click', (e) => {
+        const card = e.target.closest('.char-card');
+        if (!card) return;
+        const idx = parseInt(card.dataset.index, 10);
+        if (!isNaN(idx)) {
+            // 不调 setKeyboardFocus（避免 click 抢方向键焦点），但记录
+            keyboardState.focusedIndex = idx;
+        }
+    });
+}
+
+// 显示 / 隐藏快捷键帮助
+function showShortcutHelp() {
+    if (elements.shortcutHelpModal) elements.shortcutHelpModal.hidden = false;
+}
+function hideShortcutHelp() {
+    if (elements.shortcutHelpModal) elements.shortcutHelpModal.hidden = true;
 }

@@ -57,33 +57,95 @@ function setupEventListeners() {
         });
     }
 
-    // 画笔快捷键：仅在 adjust modal 打开时，按住 Ctrl 进入画笔模式
-    // 颜色 / 大小直接用 modal 里的 brushColor + brushSizeInput
+    // 画笔快捷键 + 键盘导航：分两个分支
+    //   - adjustModalOpen = true：画笔 + Enter 确认
+    //   - adjustModalOpen = false：方向键导航、Enter 开 modal、? 帮助
     document.addEventListener('keydown', (e) => {
-        if (!adjustModalOpen) return;
-        // 纯 Ctrl（无 Shift/Alt/Meta）才触发
-        if (e.key === 'Control' && !e.shiftKey && !e.altKey && !e.metaKey) {
-            if (!canvasState.brushMode) {
-                canvasState.brushMode = true;
+        if (adjustModalOpen) {
+            // === Modal 打开：画笔快捷键 ===
+            // 纯 Ctrl（无 Shift/Alt/Meta）才触发
+            if (e.key === 'Control' && !e.shiftKey && !e.altKey && !e.metaKey) {
+                if (!canvasState.brushMode) {
+                    canvasState.brushMode = true;
+                    updateBrushToggleButton();
+                }
+            }
+            // Escape 强制退出画笔模式（但 modal 仍打开）
+            if (e.key === 'Escape' && canvasState.brushMode) {
+                canvasState.brushMode = false;
+                canvasState.isPainting = false;
                 updateBrushToggleButton();
             }
-        }
-        // Escape 强制退出画笔模式
-        if (e.key === 'Escape' && canvasState.brushMode) {
-            canvasState.brushMode = false;
-            canvasState.isPainting = false;
-            updateBrushToggleButton();
-        }
-        // Enter 快捷键 → 触发「确定」
-        // 排除任何修饰键（避免与浏览器/系统快捷键冲突）和多行文本输入场景
-        // confirmAdjust 内部会从输入框读最新值，所以即使焦点在 number input 上也安全
-        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-            const tag = (e.target && e.target.tagName) || '';
-            // 当前 modal 仅有 number/button 输入，理论上不会触发 TEXTAREA 分支，留作防御
-            if (tag !== 'TEXTAREA' && !(e.target && e.target.isContentEditable)) {
-                e.preventDefault();
-                confirmAdjust();
+            // Enter 快捷键 → 触发「确定」
+            // 排除任何修饰键（避免与浏览器/系统快捷键冲突）和多行文本输入场景
+            // confirmAdjust 内部会从输入框读最新值，所以即使焦点在 number input 上也安全
+            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                const tag = (e.target && e.target.tagName) || '';
+                // 当前 modal 仅有 number/button 输入，理论上不会触发 TEXTAREA 分支，留作防御
+                if (tag !== 'TEXTAREA' && !(e.target && e.target.isContentEditable)) {
+                    e.preventDefault();
+                    confirmAdjust();
+                }
             }
+            return;
+        }
+
+        // === Modal 关闭：方向键导航 / Enter 开 modal / ? 帮助 ===
+        // 帮助 modal 打开时：Esc 关闭，其它不拦截
+        if (helpModal && !helpModal.hidden) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                hideShortcutHelp();
+            }
+            return;
+        }
+
+        // 输入框里：只允许 Esc 清焦点
+        const tag = (e.target && e.target.tagName) || '';
+        const inTextInput = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+        if (inTextInput) {
+            if (e.key === 'Escape' && keyboardState.focusedIndex >= 0) {
+                e.target.blur();
+                clearKeyboardFocus();
+            }
+            return;
+        }
+
+        // 方向键：移动卡焦点
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown' ||
+            e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            moveKeyboardFocus(e.key);
+            return;
+        }
+        // Home / End：第一/最后
+        if (e.key === 'Home') {
+            e.preventDefault();
+            setKeyboardFocus(0);
+            return;
+        }
+        if (e.key === 'End') {
+            e.preventDefault();
+            setKeyboardFocus(state.characters.length - 1);
+            return;
+        }
+        // Enter：打开焦点卡的 modal
+        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            if (keyboardState.focusedIndex >= 0) {
+                e.preventDefault();
+                openCardModal(keyboardState.focusedIndex);
+            }
+            return;
+        }
+        // ?: 帮助
+        if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+            e.preventDefault();
+            showShortcutHelp();
+            return;
+        }
+        // Esc：清焦点
+        if (e.key === 'Escape' && keyboardState.focusedIndex >= 0) {
+            clearKeyboardFocus();
         }
     });
     document.addEventListener('keyup', (e) => {
@@ -1495,3 +1557,122 @@ async function handleClearAll() {
         showToast('清空失败: ' + error.message);
     }
 }
+
+// === 键盘导航 + 快捷键帮助 ===
+// 仅在 adjust modal 关闭时生效（modal 打开时走 Ctrl+画笔分支）
+
+// 键盘焦点状态
+let keyboardState = {
+    focusedIndex: -1,       // 焦点卡的 state.characters index
+};
+
+// 帮助 modal 元素（DOM 加载完成后才存在；用 getter 拿最新值）
+function getHelpModal() {
+    return document.getElementById('shortcutHelpModal');
+}
+
+// 估算 grid 列数（与 /annotate 同样的算法：minmax(180px) + gap 15px）
+function getAdjustGridColumnCount() {
+    const grid = document.getElementById('charGrid');
+    if (!grid) return 5;
+    const w = grid.clientWidth;
+    return Math.max(1, Math.floor((w + 15) / (180 + 15)));
+}
+
+// 移动键盘焦点
+function moveKeyboardFocus(direction) {
+    if (state.characters.length === 0) return;
+    const cols = getAdjustGridColumnCount();
+    const cur = keyboardState.focusedIndex;
+    let next = cur;
+    if (cur < 0) {
+        // 还没焦点：定位到第一个未删除的卡
+        next = state.characters.findIndex(c => !c.deleted);
+        if (next < 0) next = 0;
+    } else {
+        if (direction === 'ArrowLeft')  next = Math.max(0, cur - 1);
+        if (direction === 'ArrowRight') next = Math.min(state.characters.length - 1, cur + 1);
+        if (direction === 'ArrowUp')    next = Math.max(0, cur - cols);
+        if (direction === 'ArrowDown')  next = Math.min(state.characters.length - 1, cur + cols);
+    }
+    // 跳过已删除的卡
+    while (next > 0 && state.characters[next] && state.characters[next].deleted) next--;
+    setKeyboardFocus(next);
+}
+
+// 设置键盘焦点
+function setKeyboardFocus(idx) {
+    clearKeyboardFocus();
+    keyboardState.focusedIndex = idx;
+    const card = document.querySelector(`.char-card[data-char-id="${state.characters[idx]?.strip_index}_${state.characters[idx]?.char_index}"]`);
+    if (card) {
+        card.classList.add('keyboard-focused');
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+}
+
+// 清除键盘焦点
+function clearKeyboardFocus() {
+    if (keyboardState.focusedIndex < 0) return;
+    const char = state.characters[keyboardState.focusedIndex];
+    if (char) {
+        const card = document.querySelector(`.char-card[data-char-id="${char.strip_index}_${char.char_index}"]`);
+        if (card) card.classList.remove('keyboard-focused');
+    }
+    keyboardState.focusedIndex = -1;
+}
+
+// 打开焦点卡的 adjust modal
+function openCardModal(idx) {
+    const char = state.characters[idx];
+    if (!char) return;
+    if (char.deleted) return;  // 已删除的卡不开
+    // 找到 displayIndex（在当前 grid 中的位置）
+    const cards = document.querySelectorAll('.char-card');
+    for (let i = 0; i < cards.length; i++) {
+        const cid = parseInt(cards[i].dataset.displayIndex, 10);
+        if (cid === idx) {
+            state.currentAdjustIndex = i;
+            break;
+        }
+    }
+    if (!state.selectedIndices.includes(idx)) {
+        state.selectedIndices = [idx];
+    }
+    if (typeof showAdjustModal === 'function') {
+        showAdjustModal(idx);
+    } else if (typeof openAdjustModal === 'function') {
+        openAdjustModal();
+    }
+}
+
+// 显示 / 隐藏帮助 modal
+function showShortcutHelp() {
+    const m = getHelpModal();
+    if (m) m.hidden = false;
+}
+function hideShortcutHelp() {
+    const m = getHelpModal();
+    if (m) m.hidden = true;
+}
+
+// 初始化：帮助 modal 关闭按钮 + 背景点击
+document.addEventListener('DOMContentLoaded', () => {
+    const closeBtn = document.getElementById('shortcutHelpClose');
+    if (closeBtn) closeBtn.addEventListener('click', hideShortcutHelp);
+    const modal = getHelpModal();
+    if (modal) {
+        const backdrop = modal.querySelector('.shortcut-help-backdrop');
+        if (backdrop) backdrop.addEventListener('click', hideShortcutHelp);
+    }
+});
+
+// 点击卡片时同步键盘焦点
+document.addEventListener('click', (e) => {
+    const card = e.target.closest('.char-card');
+    if (!card) return;
+    const cid = parseInt(card.dataset.displayIndex, 10);
+    if (!isNaN(cid)) {
+        keyboardState.focusedIndex = cid;
+    }
+}, true);

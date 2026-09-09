@@ -457,6 +457,193 @@
     text-shadow: 0 0 4px rgba(0,0,0,0.8);
     z-index: 2;
 }
+
+/* 卡片搜索栏：固定在网格上方 */
+.card-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #fff;
+    border-bottom: 1px solid #e0e0e0;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+.card-search-icon {
+    font-size: 14px;
+    opacity: 0.6;
+}
+
+.card-search-bar input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    outline: none;
+}
+
+.card-search-bar input:focus {
+    border-color: #7B9A9D;
+    box-shadow: 0 0 0 2px rgba(123, 154, 157, 0.15);
+}
+
+.card-search-count {
+    font-size: 11px;
+    color: #888;
+    min-width: 50px;
+    text-align: right;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.card-search-clear {
+    background: transparent;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.card-search-clear:hover {
+    background: #f0f0f0;
+    color: #c0392b;
+}
+
+/* 键盘焦点卡：蓝色描边 */
+.char-card.keyboard-focused {
+    outline: 3px solid #4a90a4;
+    outline-offset: -1px;
+    box-shadow: 0 0 0 6px rgba(74, 144, 164, 0.2);
+    position: relative;
+    z-index: 3;
+}
+
+/* 搜索高亮：匹配的字符/UTF 高亮显示 */
+.char-card .match-highlight {
+    background: #fff3a0;
+    padding: 0 2px;
+    border-radius: 2px;
+}
+
+/* 快捷键帮助 modal */
+.shortcut-help-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shortcut-help-modal[hidden] {
+    display: none;
+}
+
+.shortcut-help-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.shortcut-help-content {
+    position: relative;
+    background: #fff;
+    border-radius: 8px;
+    width: 460px;
+    max-width: 90%;
+    max-height: 85vh;
+    overflow: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.shortcut-help-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #f8f8f8;
+    border-radius: 8px 8px 0 0;
+}
+
+.shortcut-help-header h3 {
+    margin: 0;
+    font-size: 15px;
+    color: #333;
+}
+
+.shortcut-help-close {
+    background: transparent;
+    border: none;
+    font-size: 16px;
+    color: #888;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+
+.shortcut-help-close:hover {
+    background: #e0e0e0;
+    color: #c0392b;
+}
+
+.shortcut-help-body {
+    padding: 16px 20px;
+}
+
+.shortcut-group {
+    margin-bottom: 18px;
+}
+
+.shortcut-group:last-child {
+    margin-bottom: 0;
+}
+
+.shortcut-group h4 {
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 13px;
+    color: #444;
+}
+
+.shortcut-row span {
+    margin-left: 8px;
+    color: #666;
+}
+
+kbd {
+    display: inline-block;
+    min-width: 22px;
+    padding: 3px 7px;
+    background: #f5f5f5;
+    border: 1px solid #ccc;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: #333;
+    text-align: center;
+    line-height: 1.2;
+}
 </style>
 {% endblock %}
 
@@ -564,16 +751,51 @@
 
     <!-- 卡片网格 -->
     <div class="card-grid-container">
+        <!-- 搜索栏：键盘 / 聚焦 + Enter 实时过滤 -->
+        <div class="card-search-bar" id="cardSearchBar" style="display: none;">
+            <span class="card-search-icon">🔍</span>
+            <input type="text" id="cardSearchInput" placeholder="搜索：字符 / U+4E2D / 1-50 / index" autocomplete="off">
+            <span class="card-search-count" id="cardSearchCount">0/0</span>
+            <button class="card-search-clear" id="cardSearchClear" title="清空搜索 (Esc)">✕</button>
+        </div>
         <div id="emptyState" class="empty-state-annotate">
             <p>暂无字符数据</p>
             <button class="btn btn-primary" onclick="document.getElementById('importBtn').click()">导入目录</button>
         </div>
         <div id="cardGrid" class="card-grid" style="display: none;"></div>
     </div>
+
+    <!-- 键盘快捷键帮助 modal：按 ? 弹出 -->
+    <div class="shortcut-help-modal" id="shortcutHelpModal" hidden>
+        <div class="shortcut-help-backdrop"></div>
+        <div class="shortcut-help-content">
+            <div class="shortcut-help-header">
+                <h3>键盘快捷键</h3>
+                <button class="shortcut-help-close" id="shortcutHelpClose" title="关闭 (Esc)">✕</button>
+            </div>
+            <div class="shortcut-help-body">
+                <div class="shortcut-group">
+                    <h4>导航</h4>
+                    <div class="shortcut-row"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd><span>卡片间移动焦点</span></div>
+                    <div class="shortcut-row"><kbd>Enter</kbd><span>焦点卡 → 编辑第一个输入框</span></div>
+                    <div class="shortcut-row"><kbd>Tab</kbd><span>焦点卡 → 下一个输入框</span></div>
+                </div>
+                <div class="shortcut-group">
+                    <h4>搜索</h4>
+                    <div class="shortcut-row"><kbd>/</kbd><span>聚焦搜索框</span></div>
+                    <div class="shortcut-row"><kbd>Esc</kbd><span>清空搜索 / 关闭</span></div>
+                </div>
+                <div class="shortcut-group">
+                    <h4>其它</h4>
+                    <div class="shortcut-row"><kbd>?</kbd><span>显示本帮助</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=15"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=16"></script>
 {% endblock %}

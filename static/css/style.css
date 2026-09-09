@@ -1015,6 +1015,117 @@ body {
     background: #ffe8e8;
 }
 
+/* 键盘焦点卡：蓝色描边（/adjust + /annotate 共用） */
+.char-card.keyboard-focused,
+.char-card.keyboard-focused .card-image {
+    outline: 3px solid #4a90a4;
+    outline-offset: -1px;
+    box-shadow: 0 0 0 6px rgba(74, 144, 164, 0.2);
+    position: relative;
+    z-index: 3;
+}
+
+/* 快捷键帮助 modal（/adjust + /annotate 共用） */
+.shortcut-help-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.shortcut-help-modal[hidden] {
+    display: none;
+}
+.shortcut-help-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+}
+.shortcut-help-content {
+    position: relative;
+    background: #fff;
+    border-radius: 8px;
+    width: 460px;
+    max-width: 90%;
+    max-height: 85vh;
+    overflow: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+.shortcut-help-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #f8f8f8;
+    border-radius: 8px 8px 0 0;
+}
+.shortcut-help-header h3 {
+    margin: 0;
+    font-size: 15px;
+    color: #333;
+}
+.shortcut-help-close {
+    background: transparent;
+    border: none;
+    font-size: 16px;
+    color: #888;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+.shortcut-help-close:hover {
+    background: #e0e0e0;
+    color: #c0392b;
+}
+.shortcut-help-body {
+    padding: 16px 20px;
+}
+.shortcut-group {
+    margin-bottom: 18px;
+}
+.shortcut-group:last-child {
+    margin-bottom: 0;
+}
+.shortcut-group h4 {
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 13px;
+    color: #444;
+}
+.shortcut-row span {
+    margin-left: 8px;
+    color: #666;
+}
+kbd {
+    display: inline-block;
+    min-width: 22px;
+    padding: 3px 7px;
+    background: #f5f5f5;
+    border: 1px solid #ccc;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: #333;
+    text-align: center;
+    line-height: 1.2;
+}
+
 /* 调整弹窗 */
 .adjust-modal {
     position: fixed;

@@ -237,6 +237,38 @@
     border-left: 4px solid #A89070;
 }
 
+/* 「只看待复查」过滤按钮：默认白底灰边，激活时棕底白字 */
+.ocr-filter-btn {
+    background-color: #fff;
+    color: #666;
+    border: 1px solid #ccc;
+    padding: 8px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.ocr-filter-btn:hover {
+    background-color: #f5f0e8;
+    border-color: #A89070;
+}
+
+.ocr-filter-btn.active {
+    background-color: #A89070;
+    color: white;
+    border-color: #A89070;
+}
+
+.ocr-filter-btn.active:hover {
+    background-color: #968260;
+}
+
+/* 过滤模式下，被隐藏的卡片 */
+.char-card.filter-hidden {
+    display: none;
+}
+
 .char-card .ocr-badge {
     position: absolute;
     bottom: 3px;
@@ -510,6 +542,9 @@
     <div class="action-buttons">
         <button id="annotateBtn" class="action-btn btn-annotate" disabled>开始标注</button>
         <button id="ocrAnnotateBtn" class="action-btn btn-ocr" disabled title="EasyOCR 自动识别 + 填入空字段">OCR 自动标注</button>
+        <button id="ocrFilterBtn" class="action-btn ocr-filter-btn" style="display: none;" title="只显示 OCR 自动填入的卡片（待复查）">
+            🔍 只看待复查 (<span id="ocrFilterCount">0</span>)
+        </button>
         <button id="clearBtn" class="action-btn btn-clear">清空</button>
         <div class="ocr-config" id="ocrConfig" style="display: none;">
             <label title="仅填入置信度 ≥ 此值的识别结果（书法 OCR 准确率低，建议 0.5+）">
@@ -540,5 +575,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=14"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=15"></script>
 {% endblock %}

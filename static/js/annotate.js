@@ -37,6 +37,8 @@ const elements = {
     ocrProgress: document.getElementById('ocrProgress'),
     ocrProgressFill: document.getElementById('ocrProgressFill'),
     ocrProgressText: document.getElementById('ocrProgressText'),
+    ocrFilterBtn: document.getElementById('ocrFilterBtn'),
+    ocrFilterCount: document.getElementById('ocrFilterCount'),
     clearBtn: document.getElementById('clearBtn')
 };
 
@@ -48,6 +50,7 @@ let ocrState = {
     highConf: 0,            // 高置信填入数
     lowConf: 0,             // 低置信填入数
     threshold: 0.5,         // 当前阈值
+    filterOnly: false,      // 「只看待复查」是否激活
 };
 
 // 初始化
@@ -68,6 +71,7 @@ function setupEventListeners() {
     // 标注按钮
     elements.annotateBtn.addEventListener('click', startAnnotate);
     elements.ocrAnnotateBtn.addEventListener('click', ocrAutoAnnotate);
+    elements.ocrFilterBtn.addEventListener('click', toggleOcrFilter);
     elements.clearBtn.addEventListener('click', clearInputs);
 
     // OCR 阈值滑块：实时更新显示值
@@ -317,6 +321,44 @@ function updateUI() {
     if (elements.ocrConfig) {
         elements.ocrConfig.style.display = activeCount > 0 ? 'flex' : 'none';
     }
+    // 同步 OCR 过滤按钮的可见性 + 计数
+    updateOcrFilterButton();
+}
+
+// 更新「只看待复查」按钮的可见性、计数
+// - 有 OCR 填入的卡时显示按钮
+// - 计数 = 当前 DOM 中 .ocr-filled 的卡片数
+// - 如果过滤激活，隐藏其它卡
+function updateOcrFilterButton() {
+    const ocrFilled = elements.cardGrid.querySelectorAll('.char-card.ocr-filled').length;
+    elements.ocrFilterCount.textContent = ocrFilled;
+    // 有 OCR 填入的卡时才显示按钮
+    elements.ocrFilterBtn.style.display = ocrFilled > 0 ? '' : 'none';
+    // 如果过滤激活 + 计数变 0，自动关闭过滤
+    if (ocrState.filterOnly && ocrFilled === 0) {
+        ocrState.filterOnly = false;
+    }
+    elements.ocrFilterBtn.classList.toggle('active', ocrState.filterOnly);
+    // 应用过滤
+    applyOcrFilter();
+}
+
+// 切换「只看待复查」过滤
+function toggleOcrFilter() {
+    ocrState.filterOnly = !ocrState.filterOnly;
+    elements.ocrFilterBtn.classList.toggle('active', ocrState.filterOnly);
+    applyOcrFilter();
+}
+
+// 应用过滤：filterOnly 时，非 OCR 卡加 .filter-hidden
+function applyOcrFilter() {
+    if (!elements.cardGrid) return;
+    const cards = elements.cardGrid.querySelectorAll('.char-card');
+    cards.forEach(card => {
+        const isOcrFilled = card.classList.contains('ocr-filled');
+        const shouldHide = ocrState.filterOnly && !isOcrFilled;
+        card.classList.toggle('filter-hidden', shouldHide);
+    });
 }
 
 // 渲染卡片
@@ -975,6 +1017,8 @@ async function pollOcrProgress(targets, threshold) {
         for (const r of data.new_results) {
             applyOcrResult(r, targets, threshold);
         }
+        // 每批应用完后刷新「只看待复查」按钮的计数 + 过滤状态
+        updateOcrFilterButton();
 
         // 终态
         if (data.status === 'done') {
@@ -982,6 +1026,10 @@ async function pollOcrProgress(targets, threshold) {
             ocrState.pollTimer = null;
             const summary = `OCR 完成：识别 ${data.done} 张，填入 ${ocrState.applied}（高置信 ${ocrState.highConf} + 低置信 ${ocrState.lowConf}）`;
             showToast(summary);
+            // 任务完成后给个提示，建议用户切换到「只看待复查」模式复查
+            if (ocrState.applied > 0 && !ocrState.filterOnly) {
+                setTimeout(() => showToast('💡 提示：点上方「只看待复查」可只显示 OCR 填入的卡片'), 1500);
+            }
             ocrReset();
         } else if (data.status === 'error') {
             clearInterval(ocrState.pollTimer);

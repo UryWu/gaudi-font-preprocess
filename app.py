@@ -411,6 +411,10 @@ def api_list_sessions():
     返回每个会话的元信息：字符数、是否有有效坐标、是否有 output 目录。
     前端在 /adjust 加载失败时用此端点寻找 fallback 哈希
     （场景：localStorage 记了一个失效的 hash，原图被删，导致 '图片不存在'）。
+
+    每个 session 还包含 `exports` 字段——该 session 历次「导出训练包」产物。
+    导出来源是磁盘扫描（不是 cutting.json 记录）——用户手动删 export 目录后
+    API 自动不再列出，符合「手动删 = 不需要了」语义。详见 _scan_session_exports。
     """
     sessions = list_sessions(DATA_FOLDER)
     result = []
@@ -436,6 +440,7 @@ def api_list_sessions():
             'has_coords': has_coords,
             'output_count': out_files,
             'has_upload': has_upload,
+            'exports': _scan_session_exports(h),
         })
     # 按可用性排序：有 coords + 有 output > 有 output > 其它；同档内按字符数降序
     def score(s):
@@ -446,6 +451,64 @@ def api_list_sessions():
         return (0, s['char_count'])
     result.sort(key=score, reverse=True)
     return jsonify({'success': True, 'sessions': result})
+
+
+def _scan_session_exports(image_hash):
+    """扫描 session 下 exported/ 目录，返回所有「完整训练包」子目录的元信息。
+
+    数据来源 = 磁盘扫描：用户手动删 export 目录后 API 自动不再列出该版本，
+    不维护「导出历史数据库」（避免与现实脱节）。
+
+    过滤规则：只算 `os.path.isdir` 子目录 + 子目录里有 PNG 才算「完整导出」。
+    子目录命名规范：Ymd_HMS 时间戳（如 20260910_013320），不合规范的不算
+    （避免把用户手动 mkdir 的临时目录、backup/ 等算进来）。
+
+    返回：按 mtime 倒序的 list（最新在前）：
+      [{'ts': '20260910_013320',
+        'path': 'G:\\...\\exported\\20260910_013320',
+        'png_count': 318,
+        'csv_rows': 318,
+        'created_at': '2026-09-10T01:33:20'}, ...]
+    """
+    from datetime import datetime
+    import re
+
+    exported_dir = os.path.join(OUTPUT_FOLDER, image_hash, 'exported')
+    if not os.path.isdir(exported_dir):
+        return []
+
+    ts_pattern = re.compile(r'^\d{8}_\d{6}$')
+    results = []
+    for entry in os.listdir(exported_dir):
+        sub = os.path.join(exported_dir, entry)
+        if not os.path.isdir(sub):
+            continue
+        if not ts_pattern.match(entry):
+            continue  # 跳过非时间戳目录（如 backup/、test/）
+        # 数 PNG 与 CSV 行数（CSV 取 fontlab_ 开头的那个）
+        files = os.listdir(sub)
+        png_count = sum(1 for f in files if f.endswith('.png'))
+        csv_rows = 0
+        csv_files = [f for f in files if f.startswith('fontlab_') and f.endswith('.csv')]
+        if csv_files:
+            csv_path = os.path.join(sub, csv_files[0])
+            try:
+                with open(csv_path, 'r', encoding='utf-8') as cf:
+                    # 表头占一行，数据行 = 总行数 - 1
+                    csv_rows = max(0, sum(1 for _ in cf) - 1)
+            except OSError:
+                csv_rows = 0
+        results.append({
+            'ts': entry,
+            'path': os.path.abspath(sub),
+            'png_count': png_count,
+            'csv_rows': csv_rows,
+            'created_at': datetime.fromtimestamp(
+                os.path.getmtime(sub)).strftime('%Y-%m-%dT%H:%M:%S'),
+        })
+    # 按 mtime 倒序（最新在前）—— 同一 ts 内若有多个，按字典序兜底
+    results.sort(key=lambda x: x['created_at'], reverse=True)
+    return results
 
 
 def _dedupe_contained(regions):

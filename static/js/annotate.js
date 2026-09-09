@@ -461,7 +461,7 @@ function createCharCard(char, index) {
     card.innerHTML = `
         <div class="card-image">
             <span class="card-filename">${filename}</span>
-            <img src="${imageUrl}" alt="字符 ${index + 1}">
+            <img src="${imageUrl}" alt="字符 ${index + 1}" loading="lazy" decoding="async">
         </div>
         <div class="card-info">
             <div class="card-row simplified-row">

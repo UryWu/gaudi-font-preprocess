@@ -109,7 +109,7 @@ uni7684_02.png,U+7684,的,的,的
 导出后**不再自动**清理 `cutting_output/`、`scaled/`、`ocr_tasks/`（保留以便回溯错误 / 重新导出）。需要腾出磁盘时点 toolbar「清理过程图」按钮：
 
 - 莫兰迪浅珊瑚色按钮（破坏性操作温和警示）
-- **二次确认**：列出要删什么 + 必须手输「确认清理」四个字
+- 一次 confirm 弹窗：列出要删的清单（cutting_output/scaled/ocr_tasks），点取消则不执行
 - 后端 `/api/cleanup_intermediate` 加 `keep_exported=True`，只清过程目录不动 `exported/`
 - 标注数据 (`ocr_annotations.json`) 与 cutting.json 不受影响；OCR 已落盘的标注，下次再 OCR 会按文件名前缀 skip
 

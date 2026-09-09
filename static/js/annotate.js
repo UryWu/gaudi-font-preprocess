@@ -1288,28 +1288,21 @@ async function openOutputDirectory() {
 // 导出训练包后不再自动清理，让用户保留 cutting_output/scaled/ocr_tasks
 // 用于回溯（看原图确认错误原因）或重新导出。需要清盘时主动点此按钮。
 //
-// 设计：破坏性操作，必弹 confirm + 二次确认输入「确认清理」防误点。
-// 后端 cleanup_intermediate 不动 exported/，只清过程目录。
+// 设计：破坏性操作，弹一次 confirm 列出要删的清单防误点。后端
+// cleanup_intermediate 不动 exported/，只清过程目录。
 async function cleanupIntermediate() {
     if (!state.imageHash) {
         showToast('请先加载会话');
         return;
     }
-    // 第一次确认：列出要删什么
-    const ok1 = confirm(
+    const ok = confirm(
         '将删除以下过程文件（不可撤销）：\n\n' +
         '• cutting_output/char_*.png（切割原始图）\n' +
         '• scaled/scaled_*.png（缩放校正图）\n' +
         '• ocr_tasks/*.json（OCR 任务中间结果，已落 ocr_annotations.json 的标注不会丢）\n\n' +
         '确定清理？'
     );
-    if (!ok1) return;
-    // 第二次确认：手输「确认清理」防误点
-    const ok2 = prompt('请输入「确认清理」四个字继续：');
-    if ((ok2 || '').trim() !== '确认清理') {
-        showToast('已取消清理');
-        return;
-    }
+    if (!ok) return;
 
     showLoading('正在清理过程图...');
     try {

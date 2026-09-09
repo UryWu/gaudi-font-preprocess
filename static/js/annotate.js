@@ -1143,7 +1143,8 @@ async function importDirectory() {
     input.click();
 }
 
-// 导出白底黑字（异步：启动 task → 轮询 progress → 清理中间文件）
+// 导出训练包（异步：启动 task → 轮询 progress → 清理中间文件）
+// 三件套：白底黑字 PNG + CSV + source_map.json，原子化出在同一时间戳子目录。
 // 329 张反色+保存需要 5-10s，sync 会让请求挂死。改成后台线程 + 进度条（与 OCR 一致）。
 async function exportImages() {
     if (state.characters.length === 0) {
@@ -1231,7 +1232,8 @@ async function exportImages() {
                     state.exportedDir = p.output_dir || outputDir;
                     elements.openDirBtn.disabled = false;
                     const errCount = (p.errors || []).length;
-                    // CSV + source_map 现在随「导出白底黑字」一起出在同子目录（PNG/CSV/source_map 三件套原子化）。
+                    // 原子化三件套（PNG/CSV/source_map）现在都落在同一时间戳子目录，
+                    // 「导出训练包」按钮一次出齐。
                     // 让 toast 看到 CSV 行数，下游 AI 训练不用再手动点「导出 FontLab CSV」。
                     const csvHint = p.csv_path ? `，CSV ${p.csv_row_count || '?'} 行` : '，CSV 未生成';
                     showToast(`导出完成：${p.count} 张${csvHint}${errCount ? `（${errCount} 个错误）` : ''}`);

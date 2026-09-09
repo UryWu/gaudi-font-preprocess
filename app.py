@@ -1704,16 +1704,17 @@ def ocr_start():
                         result = {'filename': fn, 'character': '', 'confidence': 0, 'error': '文件不存在'}
                     else:
                         try:
-                            char, conf = recognize_character(fp)
+                            char, conf, engine_used = recognize_character(fp)
                             result = {
                                 'filename': fn,
                                 'character': char,
                                 'confidence': round(conf, 3),
+                                'engine': engine_used,
                                 'above_threshold': conf >= threshold and len(char) == 1,
                             }
                         except Exception as e:
                             print(f"[OCR {task_id}] {fn} 失败: {e}")
-                            result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e)}
+                            result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e), 'engine': 'none'}
 
                 # 写结果（持锁更新）
                 with _ocr_tasks_lock:
@@ -1724,14 +1725,18 @@ def ocr_start():
                 elapsed_one = time.time() - t0
                 char_disp = result.get('character') or '(空)'
                 conf_disp = result.get('confidence', 0)
-                print(f"[OCR {task_id}] [{task['done']}/{len(filenames)}] {fn} → '{char_disp}' (conf={conf_disp:.3f}, {elapsed_one*1000:.0f}ms)")
+                engine_disp = result.get('engine', '?')
+                print(f"[OCR {task_id}] [{task['done']}/{len(filenames)}] {fn} → '{char_disp}' (conf={conf_disp:.3f}, {elapsed_one*1000:.0f}ms, {engine_disp})")
             # 完成
             with _ocr_tasks_lock:
                 task['status'] = 'done'
                 task['finished_at'] = time.time()
             elapsed = time.time() - task['started_at']
             recognized = sum(1 for r in task['results'] if r.get('character'))
-            print(f"[OCR {task_id}] ✓ 任务完成: {recognized}/{len(filenames)} 识别成功, {elapsed:.1f}s ({elapsed/len(filenames)*1000:.0f}ms/张)")
+            paddle_used = sum(1 for r in task['results'] if r.get('engine') == 'paddleocr')
+            easy_used = sum(1 for r in task['results'] if r.get('engine') == 'easyocr')
+            print(f"[OCR {task_id}] ✓ 任务完成: {recognized}/{len(filenames)} 识别成功, "
+                  f"paddleocr={paddle_used}, easyocr={easy_used}, {elapsed:.1f}s ({elapsed/len(filenames)*1000:.0f}ms/张)")
         except Exception as e:
             print(f"[OCR {task_id}] 任务异常: {e}")
             import traceback

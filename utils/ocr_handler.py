@@ -162,40 +162,42 @@ def _select_engine(engine: str = None) -> str:
 
 def recognize_character(image_path: str, engine: str = None) -> Tuple[str, float]:
     """
-    识别单张字符图片，返回 (字符, 置信度 0-1)
+    识别单张字符图片，返回 (字符, 置信度 0-1, 引擎)
 
     算法：
     1. 按 _select_engine 选引擎
     2. 调用引擎 OCR
     3. 取置信度最高的识别结果
     4. 过滤：单字符 + 置信度 >= OCR_CONFIDENCE_THRESHOLD
+    5. 引擎失败 → 自动降级到另一个
 
     Args:
         image_path: 图片文件路径（建议是缩放后的 512x512 白底黑字图）
         engine: 'paddleocr' / 'easyocr' / None（自动选）
 
     Returns:
-        (character, confidence)。无有效结果时 character='', confidence=0.0
+        (character, confidence, engine_used)。无有效结果时 character='', confidence=0.0
     """
     selected = _select_engine(engine)
     try:
         if selected == 'paddleocr':
-            return _recognize_paddle(image_path)
+            return _recognize_paddle(image_path) + (selected,)
         else:
-            return _recognize_easyocr(image_path)
+            return _recognize_easyocr(image_path) + (selected,)
     except Exception as e:
         # 引擎失败 → 兜底到另一个引擎
         fallback = 'easyocr' if selected == 'paddleocr' else 'paddleocr'
         if _engine_available(fallback):
-            print(f"[OCR] {selected} 失败 ({e})，降级到 {fallback}")
+            # 静默只打短行（不再重复 err 详情，避免刷屏）
+            # print(f"[OCR] {selected} 失败，降级到 {fallback}: {type(e).__name__}")
             try:
                 if fallback == 'paddleocr':
-                    return _recognize_paddle(image_path)
+                    return _recognize_paddle(image_path) + (fallback,)
                 else:
-                    return _recognize_easyocr(image_path)
+                    return _recognize_easyocr(image_path) + (fallback,)
             except Exception as e2:
-                print(f"[OCR] {fallback} 也失败: {e2}")
-        return '', 0.0
+                return '', 0.0, 'none'
+        return '', 0.0, 'none'
 
 
 def _engine_available(name: str) -> bool:

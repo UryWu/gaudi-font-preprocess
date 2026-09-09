@@ -149,12 +149,15 @@ def _get_rapidocr():
         # Rec.lang='ch'：中英双语识别模型
         # Det.lang='ch'：中文检测模型
         # use_det=True / use_cls=True / use_rec=True：全流程
+        # intra_op_num_threads：ONNX 推理线程数（默认 = CPU 核数，显式设更稳）
         _rapidocr_engine = RapidOCR(
             params={
                 'Rec.lang': 'ch',
                 'Det.lang': 'ch',
-                'Det.use_dilation': False,  # 单字图不需要膨胀
-                'Det.box_thresh': 0.3,     # 降低检测阈值（白底黑字图）
+                'Det.use_dilation': False,
+                'Det.box_thresh': 0.3,
+                'intra_op_num_threads': 8,   # 多线程并行
+                'inter_op_num_threads': 4,
             }
         )
     return _rapidocr_engine

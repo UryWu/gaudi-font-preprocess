@@ -353,14 +353,21 @@ async function loadOcrAnnotations() {
         const r = await fetch(`/api/get_ocr_annotations/${state.imageHash}`);
         const data = await r.json();
         if (!data.success || !data.annotations) return;
-        const annotations = data.annotations;
+        const annotations = data.annotations;  // { "scaled_0002.png": {simplified, conf, ...}, ... }
+        // 建 filename → 卡下标 映射（卡的稳定标识）
+        const fnToIdx = {};
+        state.characters.forEach((c, i) => {
+            const fn = c.processed_filename || c.filename;
+            if (fn) fnToIdx[fn] = i;
+        });
         let count = 0;
-        for (const [idx, val] of Object.entries(annotations)) {
-            if (!val) continue;
-            // 兼容：字符串 = 旧格式仅字符；对象 = 新格式（simp + conf）
-            const simp = typeof val === 'string' ? val : (val.simp || '');
-            const conf = typeof val === 'object' ? (val.conf || 0) : 0;
-            if (!simp) continue;
+        for (const [filename, rec] of Object.entries(annotations)) {
+            if (!rec) continue;
+            const idx = fnToIdx[filename];
+            if (idx === undefined) continue;   // 记录对应卡不在当前列表（删除/改名），跳过
+            const simplified = typeof rec === 'string' ? rec : (rec.simplified || '');
+            const conf = typeof rec === 'object' ? (rec.conf || 0) : 0;
+            if (!simplified) continue;
             const card = document.querySelector(`.char-card[data-index="${idx}"]`);
             if (!card) continue;
             const simpInput = card.querySelector('.simplified-input');
@@ -368,11 +375,11 @@ async function loadOcrAnnotations() {
             // 卡已手动填过（值非空且非 OCR）就跳过——OCR 标注不该覆盖用户输入
             if (simpInput.value && !card.classList.contains('ocr-filled')) continue;
             // 预填 + 标 OCR 标记
-            simpInput.value = simp;
+            simpInput.value = simplified;
             const simpUtf = card.querySelector('.simplified-utf');
-            if (simpUtf) simpUtf.textContent = getUtfCode(simp);
+            if (simpUtf) simpUtf.textContent = getUtfCode(simplified);
             card.classList.add('ocr-filled');
-            state.characters[parseInt(idx, 10)].simplified = simp;
+            state.characters[idx].simplified = simplified;
             // 恢复置信度徽章（与 OCR 跑完时同款样式）
             if (conf > 0 && !card.querySelector('.ocr-badge')) {
                 const badge = document.createElement('div');
@@ -382,7 +389,7 @@ async function loadOcrAnnotations() {
                 card.appendChild(badge);
             }
             // 触发自动转繁（填繁体框）
-            convertSingleToTraditional(simp, parseInt(idx, 10));
+            convertSingleToTraditional(simplified, idx);
             count++;
         }
         if (count > 0) {
@@ -395,13 +402,14 @@ async function loadOcrAnnotations() {
 }
 
 // 保存/删除一条 OCR 标注到服务器（fire-and-forget）
-// - simp 非空：写详细记录（simp + conf + source）
-// - simp 为空：删除该条（用户接管这张卡，刷新不恢复旧 OCR 值）
-// 注：conf/source 只对「本次新增/覆盖」有意义，删除只传 simp=''
-function saveOcrAnnotation(idx, simp, opts) {
-    if (!state.imageHash) return;
-    const body = { idx, simp: simp || '' };
-    if (simp && opts) {
+// - filename：卡的稳定标识（scaled_0002.png / char_0000.png），作 json key
+// - simplified：识别出的简体字
+// - simplified 非空：写详细记录 { simplified, conf, source, updated_at }
+// - simplified 为空：删除该条（用户接管这张卡，刷新不恢复旧 OCR 值）
+function saveOcrAnnotation(filename, simplified, opts) {
+    if (!state.imageHash || !filename) return;
+    const body = { filename, simplified: simplified || '' };
+    if (simplified && opts) {
         if (opts.conf !== undefined) body.conf = opts.conf;
         if (opts.source) body.source = opts.source;
     }
@@ -552,13 +560,16 @@ function createCharCard(char, index) {
     const tradInput = card.querySelector('.traditional-input');
     const simpUtf = card.querySelector('.simplified-utf');
     const tradUtf = card.querySelector('.traditional-utf');
+    // 这张卡的稳定标识：scaled_0002.png（缩放后）或 char_0000.png（原始切割）
+    // ocr_annotations.json 的 key 用这个 filename，不随卡排序变化
+    const cardFilename = char.processed_filename || char.filename;
 
     simpInput.addEventListener('input', (e) => {
         // 用户手动编辑这张卡 → 解除「OCR 填的」状态 + 删掉已存标注
         // 否则刷新页面会从 ocr_annotations 恢复旧 OCR 值，覆盖用户的手改
         if (card.classList.contains('ocr-filled')) {
             card.classList.remove('ocr-filled');
-            saveOcrAnnotation(index, '');   // char='' → 服务端删除该条
+            saveOcrAnnotation(cardFilename, '');   // simp='' → 服务端删除该条
         }
 
         // 提取第一个完整Unicode码点（支持CJK扩展区代理对）
@@ -1140,20 +1151,21 @@ async function ocrAutoAnnotate() {
     }
 
     // 拉取已保存的 OCR 标注，跳过「已识别过」的卡（不重复识别）
-    // 判据：ocr_annotations.json 里该 idx 有记录 = 之前 OCR 识别过并保存了
-    let knownIdx = new Set();
+    // 判据：ocr_annotations.json 的 key（filename）里有该卡的 fn
+    // = 之前 OCR 识别过并保存了 → 不再重复识别
+    let knownFns = new Set();
     try {
         const kr = await fetch(`/api/get_ocr_annotations/${state.imageHash}`);
         const kd = await kr.json();
         if (kd.success && kd.annotations) {
-            knownIdx = new Set(Object.keys(kd.annotations));
+            knownFns = new Set(Object.keys(kd.annotations));
         }
     } catch (err) { /* 拉不到就当无已知标注 */ }
 
     // 收集目标：未删除 + 有文件名 + 没被 OCR 识别过（跳过已有记录）
     const targets = state.characters
         .map((c, idx) => ({ char: c, idx, fn: c.processed_filename || c.filename }))
-        .filter(t => t.fn && !t.char.deleted && !knownIdx.has(String(t.idx)));
+        .filter(t => t.fn && !t.char.deleted && !knownFns.has(t.fn));
 
     const skipped = state.characters.length - targets.length;
     if (skipped > 0) {
@@ -1311,8 +1323,8 @@ function applyOcrResult(result, targets, threshold) {
     console.log(`[OCR DEBUG] 填入 ${result.filename} → '${result.character}' (conf=${result.confidence}, ${result.engine}, idx=${target.idx})`);
 
     // 持久化到服务器（fire-and-forget，不阻塞 UI）
-    // 带 conf/source，刷新页面时可恢复置信度徽章
-    saveOcrAnnotation(target.idx, result.character, {
+    // key = target.fn（scaled_0002.png 稳定标识），带 conf/source
+    saveOcrAnnotation(target.fn, result.character, {
         conf: result.confidence,
         source: result.engine || 'ocr'
     });

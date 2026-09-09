@@ -1239,13 +1239,15 @@ _ocr_annotations_lock = threading.Lock()
 def save_ocr_annotation(image_hash):
     """保存/删除单条 OCR 标注（持久化到 data/sessions/<hash>/ocr_annotations.json）
 
-    请求体: { idx: int, simp: str, conf?: float, source?: 'ocr'|'manual' }
-    兼容旧前端传 { idx, char }（char 当 simp）。
+    请求体: { filename: str, simplified: str, conf?: float, source?: 'ocr'|'manual' }
+    - filename：卡的稳定标识（scaled_0002.png / char_0000.png），作为 json key
+      不用卡下标 idx——下标会随排序/删卡变化，filename 稳定且与 OCR 任务
+      results 里的 filename 一致，便于任务结果直接对号导入。
 
     存储值：对象（更详细，刷新页面可完整恢复）：
-        {"simp":"牲","conf":0.995,"source":"ocr","updated_at":"2026-09-09T18:26:07"}
-    - simp 非空：写入（覆盖旧值）
-    - simp 为空：删除该条 —— 用户手动改了 OCR 结果的卡不应再被恢复
+        {"simplified":"牲","conf":0.995,"source":"ocr","updated_at":"2026-09-09T18:26:07"}
+    - simplified 非空：写入（覆盖旧值）
+    - simplified 为空：删除该条 —— 用户手动改了 OCR 结果的卡不应再被恢复
     - 与 cutting.json 分开存：OCR 标注是用户数据，cutting 是几何/算法状态
 
     并发安全：OCR 每填一张卡就 POST 一次，且前端轮询一次会连续 POST 多条。
@@ -1257,13 +1259,14 @@ def save_ocr_annotation(image_hash):
     """
     from datetime import datetime
     data = request.get_json() or {}
-    idx = data.get('idx')
-    simp = data.get('simp') or data.get('char') or ''   # 兼容旧字段名 char
+    filename = data.get('filename') or ''
+    # 兼容旧字段名 char/simp（万一老前端还在发）
+    simplified = data.get('simplified') or data.get('char') or data.get('simp') or ''
     conf = data.get('conf') or 0.0
     source = data.get('source') or 'ocr'
 
-    if idx is None:
-        return jsonify({'success': False, 'error': '缺少 idx'}), 400
+    if not filename:
+        return jsonify({'success': False, 'error': '缺少 filename'}), 400
 
     path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
     with _ocr_annotations_lock:
@@ -1277,17 +1280,17 @@ def save_ocr_annotation(image_hash):
                 print(f"[ocr_annotations] {image_hash} 读坏文件，按空处理（将被修复）")
                 annotations = {}
 
-        if simp:
+        if simplified:
             # 详细记录对象
-            annotations[str(idx)] = {
-                'simp': simp,
+            annotations[filename] = {
+                'simplified': simplified,
                 'conf': round(float(conf), 3),
                 'source': source,
                 'updated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
             }
         else:
-            # simp 为空 = 删除（用户接管了这张卡）
-            annotations.pop(str(idx), None)
+            # simplified 为空 = 删除（用户接管了这张卡）
+            annotations.pop(filename, None)
 
         # 锁内直接写目标（同锁内串行，无并发重叠）
         os.makedirs(os.path.dirname(path), exist_ok=True)

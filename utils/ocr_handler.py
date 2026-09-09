@@ -28,32 +28,43 @@ OCR_CONFIDENCE_THRESHOLD = 0.2
 
 
 def _get_paddle_ocr():
-    """懒加载 PaddleOCR（首次 ~10-20s 含模型下载/加载）"""
+    """懒加载 PaddleOCR（首次 ~10-20s 含模型下载/加载）
+
+    PaddleOCR 3.x API 变化很大：init 只接受具体模型参数（model_dir 等），
+    不再有 use_gpu / use_angle_cls / show_log 这种开关。静音靠关 logger。
+
+    设计：渐进降级构造（先尝试最完整，再逐个去掉不兼容参数），
+    最终用最小参数集（仅 lang）启动 + 关 logger 静音。
+    """
     global _paddle_ocr
     if _paddle_ocr is None:
         from paddleocr import PaddleOCR
-        # PaddleOCR 3.x API：
-        #   - lang='ch'：中英双语模型
-        #   - use_angle_cls=False：单字图不需要方向分类
-        #   - show_log=False：静音
-        #   - device='cpu'：环境无 CUDA 走 CPU
-        #   注：3.x 移除了旧版的 use_gpu，改用 device
-        kwargs = dict(
-            use_angle_cls=False,
-            lang='ch',
-            show_log=False,
-            device='cpu',
-        )
-        # 3.0.0+ 才支持 device 参数；老版本不支持时降级
-        try:
-            _paddle_ocr = PaddleOCR(**kwargs)
-        except (TypeError, AssertionError) as e:
-            if 'device' in str(e) or 'use_gpu' in str(e):
-                # 移除 device 重试（兼容 < 3.0.0）
-                kwargs.pop('device', None)
-                _paddle_ocr = PaddleOCR(**kwargs)
-            else:
-                raise
+        import logging
+
+        # 关 PaddleOCR 自己的 logger（3.x 没有 show_log 开关）
+        logging.getLogger('ppocr').setLevel(logging.WARNING)
+        for name in ('ppocr', 'paddleocr', 'paddlex'):
+            logging.getLogger(name).setLevel(logging.WARNING)
+
+        # 渐进降级：先 3.x 完整参数 → 失败则逐个去掉
+        attempt_kwargs = [
+            # 3.0+ 完整：device 参数
+            {'lang': 'ch', 'device': 'cpu'},
+            # 2.x 兼容：use_gpu 替代 device
+            {'lang': 'ch', 'use_gpu': False},
+            # 最小集
+            {'lang': 'ch'},
+        ]
+        last_err = None
+        for kw in attempt_kwargs:
+            try:
+                _paddle_ocr = PaddleOCR(**kw)
+                break
+            except TypeError as e:
+                last_err = e
+                continue
+        if _paddle_ocr is None:
+            raise RuntimeError(f"PaddleOCR 初始化失败（所有参数组合都不兼容）: {last_err}")
     return _paddle_ocr
 
 

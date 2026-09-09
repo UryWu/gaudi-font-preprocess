@@ -1687,7 +1687,9 @@ def ocr_start():
         """后台 OCR 工作线程——每识别完一张就放入 new_results 供前端拉取"""
         task = _ocr_tasks[task_id]
         try:
+            print(f"[OCR {task_id}] 开始处理 {len(filenames)} 张 (threshold={threshold}, use_scaled={use_scaled})")
             for fn in filenames:
+                t0 = time.time()
                 # 路径解析（与 /api/open_path 一致：先 OUTPUT_FOLDER/hash/，再 scaled/）
                 if not fn or '..' in fn or '/' in fn or '\\' in fn:
                     result = {'filename': fn, 'character': '', 'confidence': 0, 'error': '非法文件名'}
@@ -1710,7 +1712,7 @@ def ocr_start():
                                 'above_threshold': conf >= threshold and len(char) == 1,
                             }
                         except Exception as e:
-                            print(f"OCR {fn} 失败: {e}")
+                            print(f"[OCR {task_id}] {fn} 失败: {e}")
                             result = {'filename': fn, 'character': '', 'confidence': 0, 'error': str(e)}
 
                 # 写结果（持锁更新）
@@ -1718,14 +1720,20 @@ def ocr_start():
                     task['results'].append(result)
                     task['new_results'].append(result)
                     task['done'] += 1
+                # 每张图打一行进度（控制台能实时看到）
+                elapsed_one = time.time() - t0
+                char_disp = result.get('character') or '(空)'
+                conf_disp = result.get('confidence', 0)
+                print(f"[OCR {task_id}] [{task['done']}/{len(filenames)}] {fn} → '{char_disp}' (conf={conf_disp:.3f}, {elapsed_one*1000:.0f}ms)")
             # 完成
             with _ocr_tasks_lock:
                 task['status'] = 'done'
                 task['finished_at'] = time.time()
             elapsed = time.time() - task['started_at']
-            print(f"OCR 任务完成: {task_id}, {len(filenames)} 张, {elapsed:.1f}s")
+            recognized = sum(1 for r in task['results'] if r.get('character'))
+            print(f"[OCR {task_id}] ✓ 任务完成: {recognized}/{len(filenames)} 识别成功, {elapsed:.1f}s ({elapsed/len(filenames)*1000:.0f}ms/张)")
         except Exception as e:
-            print(f"OCR 任务异常: {task_id}, {e}")
+            print(f"[OCR {task_id}] 任务异常: {e}")
             import traceback
             traceback.print_exc()
             with _ocr_tasks_lock:

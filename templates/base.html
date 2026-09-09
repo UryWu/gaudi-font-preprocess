@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}高迪书法字库预处理工具{% endblock %}</title>
     <link rel="icon" href="{{ url_for('static', filename='images/高迪字库图标.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20">
     {% block extra_css %}{% endblock %}
 </head>
 <body>
@@ -14,6 +14,21 @@
         <span class="header-text">高迪书法字库</span>
         <span class="header-subtitle">预处理工具</span>
         {% block header_actions %}{% endblock %}
+
+        <!-- 全局 session picker：在所有页面都能切换当前数据批次
+             见 static/css/style.css .session-picker；数据源 /api/list_sessions -->
+        <div class="session-picker" id="sessionPicker">
+            <button class="session-picker-btn" id="sessionPickerBtn" type="button" title="切换数据批次">
+                <span class="session-picker-icon">📁</span>
+                <span class="session-picker-current" id="sessionPickerCurrent">加载中…</span>
+                <span class="session-picker-caret">▾</span>
+            </button>
+            <div class="session-picker-dropdown" id="sessionPickerDropdown" hidden>
+                <div class="session-picker-header">数据批次（按可用性排序）</div>
+                <div class="session-picker-list" id="sessionPickerList"></div>
+                <div class="session-picker-footer" id="sessionPickerFooter"></div>
+            </div>
+        </div>
     </div>
 
     <!-- 左侧侧边导航：默认收起，鼠标触及最左边时弹出 -->
@@ -90,6 +105,127 @@
             nav.classList.toggle('pinned', pinned);
             localStorage.setItem('sideNavPinned', pinned ? '1' : '0');
             if (pinned) show();
+        });
+    })();
+    </script>
+
+    <script>
+    // 全局 session-picker：显示当前数据批次，可下拉切换
+    // 数据源 /api/list_sessions（已按 has_coords+output>0 排序）
+    (function () {
+        const btn = document.getElementById('sessionPickerBtn');
+        const dropdown = document.getElementById('sessionPickerDropdown');
+        const list = document.getElementById('sessionPickerList');
+        const footer = document.getElementById('sessionPickerFooter');
+        const currentEl = document.getElementById('sessionPickerCurrent');
+        if (!btn || !dropdown || !list) return;
+
+        let sessions = [];
+        // 每次重新读取 localStorage，避免其它标签页/脚本改后不刷新
+        const getCurrent = () => localStorage.getItem('currentImageHash') || '';
+
+        // 按钮上的当前状态：hash(8) · 字符数
+        const renderCurrent = () => {
+            const cur = getCurrent();
+            if (!cur) {
+                currentEl.textContent = '未选择';
+                currentEl.classList.add('no-selection');
+                return;
+            }
+            const s = sessions.find(x => x.hash === cur);
+            const short = cur.slice(0, 8);
+            if (s) {
+                currentEl.textContent = `${short} · ${s.char_count}字`;
+                currentEl.classList.remove('no-selection');
+            } else {
+                // localStorage 有 hash，但不在服务端列表里（极端情况：刚被「清空所有数据」删了）
+                currentEl.textContent = `${short} · 缺数据`;
+                currentEl.classList.add('no-selection');
+            }
+        };
+
+        // 下拉列表
+        const renderDropdown = () => {
+            if (sessions.length === 0) {
+                list.innerHTML = '<div class="session-picker-empty">暂无数据批次，请先到「切割布局」上传图片</div>';
+                footer.textContent = '';
+                return;
+            }
+            const cur = getCurrent();
+            list.innerHTML = sessions.map(s => {
+                const isCurrent = s.hash === cur;
+                const isAvailable = s.output_count > 0;
+                const short = s.hash.slice(0, 8);
+                const status = isAvailable
+                    ? '<span class="sp-status ok">可用</span>'
+                    : '<span class="sp-status bad">缺数据</span>';
+                // 不可用的不让点（disabled）；点击同一条目不刷新
+                const cls = `sp-item ${isCurrent ? 'current' : ''} ${!isAvailable ? 'disabled' : ''}`;
+                return `
+                    <div class="${cls}" data-hash="${s.hash}" title="${isAvailable ? '点击切换到此批次' : 'output 数据缺失，无法加载'}">
+                        <span class="sp-hash">${short}${isCurrent ? ' ✓' : ''}</span>
+                        <span class="sp-count">${s.char_count} 字</span>
+                        ${status}
+                    </div>
+                `;
+            }).join('');
+
+            // 列表项点击：切 hash + 刷新页面
+            list.querySelectorAll('.sp-item').forEach(el => {
+                el.addEventListener('click', () => {
+                    if (el.classList.contains('disabled')) return;
+                    const hash = el.dataset.hash;
+                    if (hash === getCurrent()) {
+                        dropdown.hidden = true;
+                        return;
+                    }
+                    localStorage.setItem('currentImageHash', hash);
+                    // 整页刷新最简单：每个页面的初始化都从 localStorage 读 hash
+                    window.location.reload();
+                });
+            });
+
+            // 底部统计：N 个批次，可用 M 个
+            const avail = sessions.filter(s => s.output_count > 0).length;
+            footer.textContent = `共 ${sessions.length} 个批次，可用 ${avail} 个`;
+        };
+
+        // 取数据
+        const load = () => {
+            fetch('/api/list_sessions')
+                .then(r => r.json())
+                .then(data => {
+                    if (data && data.success) {
+                        sessions = data.sessions || [];
+                        renderCurrent();
+                        renderDropdown();
+                    } else {
+                        currentEl.textContent = '加载失败';
+                    }
+                })
+                .catch(err => {
+                    console.warn('session 列表加载失败:', err);
+                    currentEl.textContent = '加载失败';
+                });
+        };
+        load();
+
+        // 切换下拉
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // 每次展开都重新拉一次，保证数据新鲜（用户在另一个标签上传了新图）
+            if (dropdown.hidden) load();
+            dropdown.hidden = !dropdown.hidden;
+        });
+        // 点外面关闭
+        document.addEventListener('click', (e) => {
+            if (!dropdown.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+                dropdown.hidden = true;
+            }
+        });
+        // Esc 关闭
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !dropdown.hidden) dropdown.hidden = true;
         });
     })();
     </script>

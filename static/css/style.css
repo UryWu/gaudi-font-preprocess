@@ -356,6 +356,173 @@ body {
     white-space: nowrap;
 }
 
+/* 全局 session-picker（顶栏右侧：当前数据批次 + 切换下拉）
+   见 templates/base.html 的 #sessionPicker */
+.session-picker {
+    position: relative;
+    margin-left: auto;
+    font-size: 12px;
+}
+
+.session-picker-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #333;
+    transition: background-color 0.15s, border-color 0.15s;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.session-picker-btn:hover {
+    background-color: #eaf3f6;
+    border-color: #7B9A9D;
+}
+
+.session-picker-icon {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.session-picker-current {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: #444;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-picker-current.no-selection {
+    color: #c0392b;
+}
+
+.session-picker-caret {
+    font-size: 9px;
+    color: #888;
+    margin-left: 2px;
+}
+
+.session-picker-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    width: 340px;
+    max-height: 420px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.session-picker-dropdown[hidden] {
+    display: none;
+}
+
+.session-picker-header {
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #666;
+    background-color: #f8f8f8;
+    border-bottom: 1px solid #e0e0e0;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+.session-picker-list {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 340px;
+}
+
+.sp-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    border-bottom: 1px solid #f0f0f0;
+    user-select: none;
+}
+
+.sp-item:last-child {
+    border-bottom: none;
+}
+
+.sp-item:hover:not(.disabled) {
+    background-color: #eaf3f6;
+}
+
+.sp-item.current {
+    background-color: #f0f6f7;
+    border-left: 3px solid #7B9A9D;
+    padding-left: 9px;  /* 补偿 border-left 占的 3px */
+}
+
+.sp-item.disabled {
+    color: #aaa;
+    cursor: not-allowed;
+    background-color: #fafafa;
+}
+
+.sp-hash {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: #555;
+    flex: 0 0 80px;
+}
+
+.sp-count {
+    flex: 1;
+    color: #666;
+}
+
+.sp-status {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 2px;
+    flex: 0 0 auto;
+}
+
+.sp-status.ok {
+    background-color: #d4e8d4;
+    color: #2c662c;
+}
+
+.sp-status.bad {
+    background-color: #f0d4d4;
+    color: #a93226;
+}
+
+.session-picker-empty {
+    padding: 24px 16px;
+    text-align: center;
+    color: #999;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.session-picker-footer {
+    padding: 6px 12px;
+    background-color: #f8f8f8;
+    border-top: 1px solid #e0e0e0;
+    font-size: 11px;
+    color: #888;
+    text-align: right;
+}
+
 /* 切割来源区按钮 */
 .btn-outline-info {
     background-color: #fff;

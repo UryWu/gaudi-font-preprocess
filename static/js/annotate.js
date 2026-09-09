@@ -309,17 +309,12 @@ function createCharCard(char, index) {
     card.className = 'char-card';
     card.dataset.index = index;
 
-    // 右键删除
-    card.title = '右键点击可删除此字符';
+    // 右键 - 自定义菜单（删除 / 在资源管理器中打开）
+    // 见 docs/调整字符画笔.md 中类似设计；这里保留标注页的「软删除」UX（卡变灰 + 已删除遮罩），
+    // 但同步删除本地文件 + session 条目，避免下次 loadCharacters 时把已删的又拉回来
     card.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        if (confirm(`删除第 ${index + 1} 个字符？`)) {
-            state.characters[index].deleted = true;
-            card.classList.add('card-deleted');
-            card.style.opacity = '0.3';
-            card.style.pointerEvents = 'none';
-            updateUI();
-        }
+        showCharContextMenu(e.clientX, e.clientY, char, index);
     });
 
     // 获取图片URL
@@ -382,6 +377,98 @@ function createCharCard(char, index) {
 
     return card;
 }
+
+// 右键删除字符（无 confirm，由右键菜单直接调用；同时删本地文件 + session 条目）
+// 与 adjust.js 的 deleteCharacter 类似，但标注页保留「软删除」UX：卡片变灰 + 「已删除」遮罩
+// 标记 state.characters[index].deleted = true 避免 loadCharacters 的 !c.deleted 过滤把它再拉回来
+async function deleteCharacter(char, index) {
+    try {
+        const r = await fetch('/api/delete_characters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: state.imageHash,
+                filenames: [char.filename]
+            })
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+    } catch (err) {
+        showToast('删除失败: ' + err.message);
+        return;
+    }
+    // 客户端：标记为已删除（保留卡片但变灰 + 「已删除」遮罩）
+    // card.deleted = true 让 loadCharacters 的 filter 跳过它，下次刷新页面就不会出现
+    state.characters[index].deleted = true;
+    const card = document.querySelector(`.char-card[data-index="${index}"]`);
+    if (card) {
+        card.classList.add('card-deleted');
+        card.style.opacity = '0.3';
+        card.style.pointerEvents = 'none';
+    }
+    updateUI();
+    showToast(`已删除 ${char.filename || '第' + (index + 1) + '号字符'}`);
+}
+
+// 显示字符图片的右键菜单
+// 见 static/css/style.css .char-context-menu（与 adjust.js 共用同一组 CSS）
+function showCharContextMenu(x, y, char, index) {
+    // 先关闭已有菜单，避免多个同时出现
+    hideCharContextMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'char-context-menu';
+    menu.id = 'charContextMenu';
+    menu.innerHTML = `
+        <div class="ctx-item danger" data-action="delete">🗑 删除此字符</div>
+        <div class="ctx-item" data-action="open-folder">📁 打开图片位置</div>
+    `;
+    // 定位：用 clientX/Y + position:fixed，菜单跟随光标
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    document.body.appendChild(menu);
+
+    // 边界保护：菜单可能溢出视口右下角 → 改为向左/上展开
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+        menu.style.left = (x - rect.width) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+        menu.style.top = (y - rect.height) + 'px';
+    }
+
+    // 点击菜单项：分发到删除/打开
+    menu.addEventListener('click', async (e) => {
+        const action = e.target.dataset.action;
+        hideCharContextMenu();
+        if (action === 'delete') {
+            deleteCharacter(char, index);
+        } else if (action === 'open-folder') {
+            try {
+                const r = await fetch('/api/open_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: char.filename, hash: state.imageHash })
+                });
+                const data = await r.json();
+                if (!data.success) throw new Error(data.error);
+                showToast(`已在资源管理器中打开 ${char.filename}`);
+            } catch (err) {
+                showToast('打开失败: ' + err.message);
+            }
+        }
+    });
+}
+
+function hideCharContextMenu() {
+    const existing = document.getElementById('charContextMenu');
+    if (existing) existing.remove();
+}
+
+// 全局点击/滚动关闭菜单：useCapture=true 抢在卡片其他 click 之前触发
+// 否则点菜单项自己的 click 会先被 hideCharContextMenu 关掉，菜单项逻辑不会执行
+document.addEventListener('click', hideCharContextMenu, true);
+document.addEventListener('scroll', hideCharContextMenu, true);
 
 // 获取UTF编码（支持CJK扩展区等补充平面字符）
 function getUtfCode(char) {

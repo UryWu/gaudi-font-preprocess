@@ -208,14 +208,10 @@ def recognize_character(image_path: str) -> Tuple[str, float]:
     # 校验 1：必须是单字符
     if len(text) != 1:
         return '', confidence
-    # 校验 2：必须落在 CJK 基本平面（U+4E00–U+9FFF）或扩展 A（U+3400–U+4DBF）
-    # 原因：RapidOCR mobile 模型对书法字（草书/异体字）经常误识别成英文/数字
-    # （X/L/T/J/7/2/A/b 等），过滤掉避免污染标注
-    code = ord(text[0])
-    is_cjk = (0x4E00 <= code <= 0x9FFF) or (0x3400 <= code <= 0x4DBF)
-    if not is_cjk:
-        return '', confidence
-    # 校验 3：置信度下限
+    # 注：之前加过 CJK 白名单滤掉 X/L/J/7 等误识别，但书法字库中也可能有
+    # 英文 / 数字（如年份、署名、款识），不应一律拒绝。错的字用户用
+    # 「只看待复查」模式手动改即可。
+    # 校验 2：置信度下限
     if confidence < OCR_CONFIDENCE_THRESHOLD:
         return '', confidence
     return text, confidence

@@ -398,6 +398,44 @@ function applyStoredAnnotationToCard(card, index, rec, missingOut) {
     return true;
 }
 
+// 把当前所有卡上已填的繁体批量写回 ocr_annotations.json（仅补 traditional 字段，
+// 保留各记录的 simplified/conf/source）。OCR done 后调用——繁体已由
+// loadOcrAnnotations 的 fillMissingTraditional 填到各卡框，这里统一落盘，
+// 之后刷新页面直接读 json 不再转换。
+async function saveAllTraditional() {
+    if (!state.imageHash) return;
+    const traditional = {};
+    const cards = document.querySelectorAll('.char-card');
+    cards.forEach((card, idx) => {
+        const tradInput = card.querySelector('.traditional-input');
+        if (!tradInput) return;
+        const trad = (tradInput.value || '').trim();
+        if (!trad) return;
+        const charObj = state.characters[idx];
+        if (!charObj) return;
+        const fn = charObj.processed_filename || charObj.filename;
+        if (!fn) return;
+        traditional[fn] = trad;
+    });
+    const keys = Object.keys(traditional);
+    if (keys.length === 0) return;
+    try {
+        const r = await fetch(`/api/bulk_fill_traditional/${state.imageHash}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ traditional })
+        });
+        const d = await r.json();
+        if (d.success) {
+            console.log(`已批量补 ${d.updated} 张繁体到 ocr_annotations.json`);
+        } else {
+            console.warn('bulk_fill_traditional 失败:', d.error);
+        }
+    } catch (err) {
+        console.warn('批量补繁体失败:', err);
+    }
+}
+
 // 批量给缺繁体的卡补繁体：把所有简体拼成一串，一次调 /api/convert_to_traditional，
 // 返回结果按位置分发填到各卡繁体框。避免每张卡各发一次接口。
 async function fillMissingTraditional(missingList) {
@@ -1431,10 +1469,15 @@ async function pollOcrProgress(targets, threshold) {
             ocrState.pollTimer = null;
             const summary = `OCR 完成：识别 ${data.done} 张，填入 ${ocrState.applied}（高置信 ${ocrState.highConf} + 低置信 ${ocrState.lowConf}）`;
             showToast(summary);
-            // 兜底补齐：worker 后端直写盘的结果，若前端 poll 漏应用（中途刷新/切页
-            // 回来）会躺在 ocr_annotations.json 里。任务 done 后再拉一次全量，
-            // 把那些空卡补上，滚动时图片加载即有标注。
-            loadOcrAnnotations(true);
+            // 兜底补齐（async，不阻塞 UI）：
+            //  1. loadOcrAnnotations(true)：拉全量，worker 直写但 poll 漏应用的空卡
+            //     补上；缺繁体的卡由 fillMissingTraditional 一次性批量转繁填框
+            //  2. saveAllTraditional()：把补好的繁体批量写回 ocr_annotations.json，
+            //     刷新不再重复转换
+            (async () => {
+                await loadOcrAnnotations(true);
+                await saveAllTraditional();
+            })();
             // 任务完成后给个提示，建议用户切换到「只看待复查」模式复查
             if (ocrState.applied > 0 && !ocrState.filterOnly) {
                 setTimeout(() => showToast('💡 提示：点上方「只看待复查」可只显示 OCR 填入的卡片'), 1500);
@@ -1496,29 +1539,14 @@ function applyOcrResult(result, targets, threshold) {
     badge.title = `OCR 置信度 ${result.confidence}（阈值 ${threshold}）`;
     card.appendChild(badge);
 
-    // 自动转繁体（async），完成后把繁体一并存盘，刷新时不再重复转换
+    // OCR 中只填 UI 简化字。繁体 + 落盘不由这里逐张处理：
+    //  - simplified 已由后端 worker 每张直写 ocr_annotations.json
+    //  - 繁体统一在 OCR done 后由 loadOcrAnnotations + saveAllTraditional
+    //    一次批量转换并落盘（避免每张卡发一个 convert 请求 → 高并发
+    //    OpenCC 初始化卡死后端，之前 100 张后转繁/保存全停的根因）
     ocrState.applied++;
     if (isHigh) ocrState.highConf++; else ocrState.lowConf++;
     console.log(`[OCR DEBUG] 填入 ${result.filename} → '${result.character}' (conf=${result.confidence}, ${result.engine}, idx=${target.idx})`);
-
-    // 先转繁体再持久化：拿到 traditional 后连同 simplified/conf/source 一起存
-    // （后端 worker 直写时无 traditional，这里前端补全；转换失败则存空串，
-    //  刷新时 loadOcrAnnotations 会 fallback 重新转换）
-    convertSingleToTraditional(result.character, target.idx).then(trad => {
-        saveOcrAnnotation(target.fn, result.character, {
-            traditional: trad || '',
-            conf: result.confidence,
-            source: result.engine || 'ocr'
-        });
-        // 同步更新本地缓存：OCR 进行中滚到视口外卡的懒加载图 onload 时，
-        // 若该卡 poll 漏应用，也能从 cache 补填
-        ocrAnnCache[target.fn] = {
-            simplified: result.character,
-            traditional: trad || '',
-            conf: result.confidence,
-            source: result.engine || 'ocr'
-        };
-    });
 }
 
 // 清理 OCR 状态（任务完成 / 失败 / 取消时）

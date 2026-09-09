@@ -35,6 +35,21 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
+# OpenCC 转换器模块级缓存。
+# 每请求重建 opencc.OpenCC('s2t') 很重（初始化整张字典表），OCR 每张卡
+# 发一次转换请求时会形成高并发 + 每请求重建 → 后端积压卡死。
+# 缓存复用两个实例，转换本身在单字符/短文上毫秒级。
+try:
+    import opencc as _opencc
+    _S2T_CONVERTER = _opencc.OpenCC('s2t')
+    _T2S_CONVERTER = _opencc.OpenCC('t2s')
+    print('[opencc] s2t/t2s 转换器已初始化（缓存）')
+except Exception as _opencc_err:
+    _opencc = None
+    _S2T_CONVERTER = None
+    _T2S_CONVERTER = None
+    print(f'[opencc] 初始化失败（转换将原样返回）: {_opencc_err}')
+
 
 # 切割产物子目录：data/sessions/<hash>/cutting_output/
 # 与 scaled/ 平级——一个放 char_*.png（切割图），一个放 scaled_*.png（缩放后）
@@ -1396,6 +1411,49 @@ def bulk_save_ocr_annotations(image_hash):
     return jsonify({'success': True, 'received': len(incoming), 'saved': saved})
 
 
+@app.route('/api/bulk_fill_traditional/<image_hash>', methods=['POST'])
+def bulk_fill_traditional(image_hash):
+    """批量给已有标注记录补 traditional（仅更新繁体字段，保留 simplified/conf/source）
+
+    用途：OCR worker 直写记录时只有 simplified（后端不做繁简转换）。
+    前端 OCR done 后批量把繁体算好，POST 到这里给每张已有记录补上 traditional，
+    之后刷新页面直接读 json，不再重复调转换接口。
+
+    请求体: { traditional: { filename: "華", ... } }
+    """
+    data = request.get_json() or {}
+    incoming = data.get('traditional') or {}
+    if not isinstance(incoming, dict):
+        return jsonify({'success': False, 'error': 'traditional 必须是 dict'}), 400
+
+    path = os.path.join(DATA_FOLDER, image_hash, 'ocr_annotations.json')
+    with _ocr_annotations_lock:
+        annotations = {}
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    annotations = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                annotations = {}
+
+        updated = 0
+        for fn, trad in incoming.items():
+            trad = (trad or '').strip()
+            if not fn or not trad:
+                continue
+            existing = annotations.get(fn)
+            # 只更新已有记录（OCR worker 或 manual 都行）的传统字段
+            if isinstance(existing, dict) and existing.get('simplified'):
+                existing['traditional'] = trad
+                updated += 1
+
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(annotations, f, ensure_ascii=False, indent=2)
+
+    print(f"[bulk_fill_traditional] {image_hash}: 补 {updated} 张繁体")
+    return jsonify({'success': True, 'updated': updated})
+
+
 @app.route('/api/get_ocr_annotations/<image_hash>', methods=['GET'])
 def get_ocr_annotations(image_hash):
     """获取这个 session 的所有 OCR 标注
@@ -1529,24 +1587,18 @@ def get_scaled_results(image_hash):
 
 @app.route('/api/convert_to_traditional', methods=['POST'])
 def convert_to_traditional():
-    """简体转繁体"""
+    """简体转繁体（用模块级缓存的 OpenCC 实例，不每请求重建）"""
+    data = request.get_json() or {}
+    text = data.get('text', '')
+    if not text:
+        return jsonify({'success': True, 'result': ''})
+
+    if _S2T_CONVERTER is None:
+        return jsonify({'success': True, 'result': text})  # opencc 未初始化，原样返回
+
     try:
-        import opencc
-        data = request.get_json()
-        text = data.get('text', '')
-
-        if not text:
-            return jsonify({'success': True, 'result': ''})
-
-        # 使用 OpenCC 转换：简体 -> 繁体
-        converter = opencc.OpenCC('s2t')
-        result = converter.convert(text)
-
-        print(f"简转繁: '{text}' -> '{result}'")
+        result = _S2T_CONVERTER.convert(text)
         return jsonify({'success': True, 'result': result})
-    except ImportError as e:
-        print(f"OpenCC未安装: {e}")
-        return jsonify({'success': True, 'result': text})
     except Exception as e:
         print(f"简转繁错误: {e}")
         return jsonify({'success': False, 'error': str(e)})
@@ -1554,31 +1606,20 @@ def convert_to_traditional():
 
 @app.route('/api/convert_to_simplified', methods=['POST'])
 def convert_to_simplified():
-    """繁体转简体"""
+    """繁体转简体（用模块级缓存的 OpenCC 实例，不每请求重建）"""
+    data = request.get_json() or {}
+    text = data.get('text', '')
+    if not text:
+        return jsonify({'success': True, 'result': ''})
+
+    if _T2S_CONVERTER is None:
+        return jsonify({'success': True, 'result': text})  # opencc 未初始化，原样返回
+
     try:
-        import opencc
-        data = request.get_json()
-        text = data.get('text', '')
-
-        if not text:
-            return jsonify({'success': True, 'result': ''})
-
-        # 使用 OpenCC 转换：繁体 -> 简体
-        converter = opencc.OpenCC('t2s')
-        result = converter.convert(text)
-
-        print(f"繁转简: '{text}' -> '{result}'")
+        result = _T2S_CONVERTER.convert(text)
         return jsonify({'success': True, 'result': result})
-    except ImportError as e:
-        print(f"OpenCC未安装: {e}")
-        return jsonify({'success': True, 'result': text})
     except Exception as e:
         print(f"繁转简错误: {e}")
-        return jsonify({'success': False, 'error': str(e)})
-    except ImportError:
-        # 如果没有安装 OpenCC，尝试使用内置映射
-        return jsonify({'success': True, 'result': text})
-    except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 

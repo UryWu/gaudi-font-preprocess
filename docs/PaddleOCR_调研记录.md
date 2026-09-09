@@ -253,3 +253,47 @@ app.py:22 启动时 import，Flask 直接 ImportError 启不来。
 - `0cd52a1` PaddleOCR 3.x ocr() 不再接 cls 参数
 
 如需重试 PaddleOCR：`git log --oneline --reverse -- utils/ocr_handler.py` 找最早 PaddleOCR 相关 commit，用 `git revert` 逐个反向应用。
+
+---
+
+# RapidOCR GPU 加速实测（2026-09-09）
+
+## 结论
+**GPU（GTX 1060）对 RapidOCR 单字识别无提速**。CUDA 优先 296ms/张 vs 纯 CPU 295ms/张，完全一致。保留 onnxruntime-gpu 安装，代码按 providers 顺序自动降级 CPU，无额外维护。
+
+## 硬件/环境
+- NVIDIA GeForce GTX 1060（Pascal, Compute 6.1, 6 GB 显存）
+- 驱动 560.81，CUDA Version 12.6
+- onnxruntime-gpu：先后试 1.29.0 → 失败（需 CUDA 13 + cuDNN 9，机器没装）；1.18.1 成功（CUDA EP 可建，需 CUDA 11.x/12.x + cuDNN 8.x，wheel 自带 DLL）
+
+## 安装坑
+1. **1.29.0 报错**：`onnxruntime_providers_cuda.dll depends on cublasLt64_13.dll which is missing` + `Require cuDNN 9.* and CUDA 13.*`。机器只有 CUDA 12.6，不满足 → CUDA EP 加载失败自动降级 CPU（`get_device()` 报 GPU 是假象，实为 CPU）。
+2. **uv uninstall onnxruntime 报 RECORD not found**：无害，pip 覆盖即可。
+3. **dll 被占用 Access denied**：须先杀所有 python（`kill_all_7500_port_flask_processes.bat`）再装。
+
+## 为什么 GPU 不加速
+1. 每次 OCR = det + cls + rec 三个小模型**逐张**跑，每张含 CPU↔GPU 显存传输 + kernel launch
+2. mobile 小模型 + 512x512 单字小图：CPU 8 线程 AVX 已极快，GPU 传输开销吃掉算力优势
+3. GTX 1060（6.1）低吞吐小模型无优势；推理 session 已缓存（非每张重建）
+4. det 单模型 GPU 层 58ms/次有效，但只是整条 pipeline 一小块，剩余 ~200ms 在预处理/编排/后处理
+
+## 代码现状（保留 GPU 自动降级）
+`utils/ocr_handler.py` `_get_rapidocr()`：
+```python
+providers = ['CPUExecutionProvider']
+avail = ort.get_available_providers()
+for p in ('TensorrtExecutionProvider', 'CUDAExecutionProvider'):
+    if p in avail: providers.insert(0, p)
+RapidOCR(params={'providers': providers, ...})
+```
+- 有 CUDA → 用 GPU；cuDNN 缺 → RapidOCR 内部降级 CPU，不崩
+- 端到端无差异，可放心保留
+
+## 未来 GPU 才有价值的场景
+- 换 PP-OCRv4 **server** 模型（更大，CPU 1.5s/张 → GPU ~100ms，收益才明显）
+- 批量推理（多字拼一张大图）
+- 换 RTX 30/40 系（Tensor Core）
+
+## 相关 commit
+- `34918e1` OCR worker 每张识别完直接写 ocr_annotations.json（不依赖前端 poll）
+- `643b17b` OCR worker 快照写盘 PermissionError 不再中断识别

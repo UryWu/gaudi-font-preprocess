@@ -27,7 +27,6 @@ const elements = {
     traditionalInputGroup: document.getElementById('traditionalInputGroup'),
     importBtn: document.getElementById('importBtn'),
     exportBtn: document.getElementById('exportBtn'),
-    csvBtn: document.getElementById('csvBtn'),
     openDirBtn: document.getElementById('openDirBtn'),
     cleanupBtn: document.getElementById('cleanupBtn'),
     annotateBtn: document.getElementById('annotateBtn'),
@@ -95,7 +94,6 @@ function setupEventListeners() {
 
     // 导出按钮
     elements.exportBtn.addEventListener('click', exportImages);
-    elements.csvBtn.addEventListener('click', exportCSV);
     elements.openDirBtn.addEventListener('click', openOutputDirectory);
     if (elements.cleanupBtn) elements.cleanupBtn.addEventListener('click', cleanupIntermediate);
 
@@ -641,7 +639,6 @@ function updateUI() {
     elements.cardCount.textContent = activeCount;
     elements.annotateBtn.disabled = activeCount === 0;
     elements.exportBtn.disabled = activeCount === 0;
-    elements.csvBtn.disabled = activeCount === 0;
     // OCR 按钮：有字符时启用（无 task 正在跑时）
     elements.ocrAnnotateBtn.disabled = activeCount === 0 || !!ocrState.taskId;
     // 保存标注按钮：有字符时启用
@@ -1257,65 +1254,6 @@ async function exportImages() {
         showToast('导出失败: ' + error.message);
         reset();
     }
-}
-
-// 导出CSV
-async function exportCSV() {
-    if (state.characters.length === 0) {
-        showToast('没有可导出的字符');
-        return;
-    }
-
-    // 收集标注数据
-    const annotations = [];
-    state.characters.forEach((char, index) => {
-        const card = document.querySelector(`.char-card[data-index="${index}"]`);
-        if (card) {
-            const simpChar = card.querySelector('.simplified-input').value;
-            const tradChar = card.querySelector('.traditional-input').value;
-
-            if (simpChar || tradChar) {
-                annotations.push({
-                    index: index,
-                    filename: char.filename || char.processed_filename,
-                    simplified: simpChar,
-                    traditional: tradChar,
-                    primary: state.mode === 'simplified' ? simpChar : state.mode === 'traditional' ? tradChar : (simpChar || tradChar)
-                });
-            }
-        }
-    });
-
-    if (annotations.length === 0) {
-        showToast('请先标注字符');
-        return;
-    }
-
-    showLoading('正在导出CSV...');
-
-    try {
-        const response = await fetch('/api/export_csv', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                hash: state.imageHash,
-                annotations: annotations,
-                mode: state.mode
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showToast(`成功导出CSV到 ${data.output_path}`);
-        } else {
-            throw new Error(data.error);
-        }
-    } catch (error) {
-        showToast('导出失败: ' + error.message);
-    }
-
-    hideLoading();
 }
 
 // 打开输出目录

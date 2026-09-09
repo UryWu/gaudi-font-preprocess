@@ -1232,15 +1232,15 @@ def save_scaled():
 
 @app.route('/api/save_ocr_annotation/<image_hash>', methods=['POST'])
 def save_ocr_annotation(image_hash):
-    """保存单条 OCR 标注（持久化到 data/sessions/<hash>/ocr_annotations.json）
+    """保存/删除单条 OCR 标注（持久化到 data/sessions/<hash>/ocr_annotations.json）
 
     请求体: { idx: int, char: str }
     行为:
     - char 非空：写入 ocr_annotations.json[idx] = char（覆盖旧值）
-    - char 为空：不删旧的（用户想清就让他手动清）
+    - char 为空：删除该条 —— 用户手动改了 OCR 结果的卡不应再被恢复
     - 与 cutting.json 分开存：OCR 标注是用户数据，cutting 是几何/算法状态
     """
-    data = request.get_json()
+    data = request.get_json() or {}
     idx = data.get('idx')
     char = data.get('char', '')
 
@@ -1254,10 +1254,12 @@ def save_ocr_annotation(image_hash):
     else:
         annotations = {}
 
-    if not char:
-        return jsonify({'success': True, 'note': 'char 为空，未保存'})
+    if char:
+        annotations[str(idx)] = char
+    else:
+        # char 为空 = 删除（用户接管了这张卡）
+        annotations.pop(str(idx), None)
 
-    annotations[str(idx)] = char
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(annotations, f, ensure_ascii=False, indent=2)

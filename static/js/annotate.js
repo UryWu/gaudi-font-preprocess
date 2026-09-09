@@ -532,6 +532,13 @@ function createCharCard(char, index) {
     const tradUtf = card.querySelector('.traditional-utf');
 
     simpInput.addEventListener('input', (e) => {
+        // 用户手动编辑这张卡 → 解除「OCR 填的」状态 + 删掉已存标注
+        // 否则刷新页面会从 ocr_annotations 恢复旧 OCR 值，覆盖用户的手改
+        if (card.classList.contains('ocr-filled')) {
+            card.classList.remove('ocr-filled');
+            saveOcrAnnotation(index, '');   // char='' → 服务端删除该条
+        }
+
         // 提取第一个完整Unicode码点（支持CJK扩展区代理对）
         const chars = Array.from(e.target.value);
         const char = chars[0] || '';

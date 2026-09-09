@@ -188,8 +188,9 @@ def recognize_character(image_path: str, engine: str = None) -> Tuple[str, float
         # 引擎失败 → 兜底到另一个引擎
         fallback = 'easyocr' if selected == 'paddleocr' else 'paddleocr'
         if _engine_available(fallback):
-            # 静默只打短行（不再重复 err 详情，避免刷屏）
-            # print(f"[OCR] {selected} 失败，降级到 {fallback}: {type(e).__name__}")
+            # 打印简要错误（缩短避免刷屏）
+            err_short = type(e).__name__ + ': ' + str(e)[:80]
+            print(f"[OCR] {selected} 失败 ({err_short})，降级到 {fallback}")
             try:
                 if fallback == 'paddleocr':
                     return _recognize_paddle(image_path) + (fallback,)

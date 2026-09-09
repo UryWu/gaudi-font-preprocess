@@ -354,11 +354,25 @@ async function loadOcrAnnotations() {
         const data = await r.json();
         if (!data.success || !data.annotations) return;
         const annotations = data.annotations;  // { "scaled_0002.png": {simplified, conf, ...}, ... }
-        // 建 filename → 卡下标 映射（卡的稳定标识）
+        // 建 filename → 卡下标 映射
+        // session 里 char 字段可能是 char_NNNN.png（原始切割）或
+        // scaled_NNNN.png（缩放后）。OCR 标注存的 key 也是其中之一。
+        // 索引时同时认两种 fn，确保任意一种都能对得上。
         const fnToIdx = {};
         state.characters.forEach((c, i) => {
-            const fn = c.processed_filename || c.filename;
-            if (fn) fnToIdx[fn] = i;
+            // 后端可能给 processed_filename 或 filename，OCR 标注也可能存其中之一
+            for (const fn of [c.processed_filename, c.filename]) {
+                if (fn) fnToIdx[fn] = i;
+            }
+            // 若文件名带 scaled_ 前缀（如 scaled_0002.png），也兼容对应 char_0002.png
+            if (c.processed_filename && c.processed_filename.startsWith('scaled_')) {
+                const charEq = c.processed_filename.replace(/^scaled_/, 'char_');
+                fnToIdx[charEq] = i;
+            }
+            if (c.filename && c.filename.startsWith('char_')) {
+                const scaledEq = c.filename.replace(/^char_/, 'scaled_');
+                fnToIdx[scaledEq] = i;
+            }
         });
         let count = 0;
         for (const [filename, rec] of Object.entries(annotations)) {

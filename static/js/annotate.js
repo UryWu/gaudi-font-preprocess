@@ -466,16 +466,19 @@ async function saveManualAnnotations() {
     const cards = document.querySelectorAll('.char-card');
     let nonEmpty = 0;
     // 遍历所有卡，取每张卡对应的 filename（与 loadOcrAnnotations 同规则）
+    // 简体 + 繁体一并收集（繁体框可能是用户手动填的或 OCR 自动转的）
     cards.forEach((card, idx) => {
         const simpInput = card.querySelector('.simplified-input');
         if (!simpInput) return;
         const char = (simpInput.value || '').trim();
         if (!char) return;   // 空卡跳过
+        const tradInput = card.querySelector('.traditional-input');
+        const tradChar = (tradInput && tradInput.value || '').trim();
         const charObj = state.characters[idx];
         if (!charObj) return;
         const fnKey = charObj.processed_filename || charObj.filename;
         if (!fnKey) return;
-        annotations[fnKey] = char;
+        annotations[fnKey] = { simplified: char, traditional: tradChar };
         nonEmpty++;
     });
     if (nonEmpty === 0) {

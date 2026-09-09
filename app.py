@@ -1359,10 +1359,17 @@ def bulk_save_ocr_annotations(image_hash):
                 annotations = {}
 
         now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-        for filename, simplified in incoming.items():
-            simplified = (simplified or '').strip()
+        for filename, val in incoming.items():
             if not filename:
                 continue
+            # 值可以是：对象 {simplified, traditional}（保存标注按钮新版），
+            # 或字符串简化（旧版兼容）
+            if isinstance(val, dict):
+                simplified = (val.get('simplified') or '').strip()
+                new_trad = (val.get('traditional') or '').strip()
+            else:
+                simplified = (val or '').strip()
+                new_trad = ''
             if not simplified:
                 # 空值 = 删除（用户主动清掉这张卡的标注）
                 annotations.pop(filename, None)
@@ -1371,11 +1378,11 @@ def bulk_save_ocr_annotations(image_hash):
             # 已存在的 manual 标注 → 不覆盖（用户可能后端手动改过）
             if isinstance(existing, dict) and existing.get('source') == 'manual':
                 continue
-            # traditional 继承已有记录（OCR 已算好的繁体，别丢）
+            # 繁体：本次传入优先；没传则继承已有记录（OCR 已算好的繁体，别丢）
             prev_trad = existing.get('traditional', '') if isinstance(existing, dict) else ''
             annotations[filename] = {
                 'simplified': simplified,
-                'traditional': prev_trad,
+                'traditional': new_trad or prev_trad,
                 'conf': existing.get('conf', 0.0) if isinstance(existing, dict) else 0.0,
                 'source': 'manual',
                 'updated_at': now,

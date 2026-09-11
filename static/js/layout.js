@@ -53,6 +53,7 @@ const ctx = canvas.getContext('2d');
 const imageInput = document.getElementById('imageInput');
 const uploadBtn = document.getElementById('uploadBtn');
 const saveBtn = document.getElementById('saveBtn');
+const loadBtn = document.getElementById('loadBtn');
 const applyBtn = document.getElementById('applyBtn');
 const emptyState = document.getElementById('emptyState');
 const rotateLeftBtn = document.getElementById('rotateLeftBtn');
@@ -157,6 +158,7 @@ function setupEventListeners() {
     uploadBtn.addEventListener('click', () => imageInput.click());
     imageInput.addEventListener('change', handleImageUpload);
     saveBtn.addEventListener('click', saveCutLines);
+    loadBtn.addEventListener('click', loadCutLines);
     applyBtn.addEventListener('click', applyCut);
 
     // Canvas 事件
@@ -348,6 +350,7 @@ async function handleImageUpload(e) {
 
         // 启用按钮
         saveBtn.disabled = false;
+        loadBtn.disabled = false;
         applyBtn.disabled = false;
         rotateLeftBtn.disabled = false;
         rotateRightBtn.disabled = false;
@@ -1398,6 +1401,52 @@ async function saveCutLines() {
     hideLoading();
 }
 
+// 加载切割线：从当前 session 的 cutting.json 重新读回配置，覆盖画布上的当前内容。
+// 与 saveCutLines 成对——save 是「画布 → cutting.json」，此函数是「cutting.json → 画布」。
+// 读取位置：data/sessions/<imageHash>/cutting.json（见 docs/数据存储说明.md）
+//
+// 与「上传图片时自动恢复」的区别：上传只在同一张图（同 hash）已有会话时自动读一次；
+// 此按钮用于两种情况：① 画布上改了还没存，想还原到上次存储的版本；
+// ② cutting.json 被外部改动后（例如另开一个窗口存的），重新同步到画布。
+async function loadCutLines() {
+    if (!state.imageHash) return;
+
+    showLoading('加载中...');
+
+    try {
+        // 复用已有接口：/api/load_session 返回的就是 cutting.json 的内容
+        const response = await fetch(`/api/load_session/${state.imageHash}`);
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error);
+        }
+
+        // 加载会覆盖画布上未保存的修改 —— 先压撤销栈，误点也能一键还原
+        // （与 handleDetect 识别前压栈同做法）
+        pushHistory();
+
+        const session = data.data || {};
+        state.verticalLines = session.vertical_lines || [];
+        state.horizontalLines = session.horizontal_lines || [];
+        state.stripHorizontalLines = session.strip_horizontal_lines || [];
+        state.boxes = session.boxes || [];
+        // 同步绿框主集：cutting.json 存的是完整集合（与识别后一致）。
+        // 不更新的话，「重置绿框过滤」会拿旧的 masterBoxes 还原出错集合（见 getCurrentFilterPredicate）
+        masterBoxes = state.boxes.slice();
+        persistMasterBoxes();
+
+        drawCanvas();
+        updateUI();
+        showToast(`切割线已加载：纵向 ${state.verticalLines.length} 条、绿框 ${state.boxes.length} 个`);
+    } catch (error) {
+        showToast('加载失败: ' + error.message);
+        console.error(error);
+    }
+
+    hideLoading();
+}
+
 async function applyCut() {
     if (!state.imageHash) return;
 
@@ -1635,7 +1684,7 @@ function setRotateButtonsDisabled(disabled) {
     rotateResetBtn.disabled = disabled || state.cumulativeRotation === 0;
 }
 
-// ============== 绿色框过滤设置 ==============
+// ============== 绿色框设置 ==============
 
 // 保存原始（未过滤）的 boxes，用于重置
 let masterBoxes = [];
@@ -1765,6 +1814,7 @@ function initGreenBoxModal() {
         ['maxWSlider', 'maxWInput'],
         ['minHSlider', 'minHInput'],
         ['maxHSlider', 'maxHInput'],
+        ['mergeDistSlider', 'mergeDistInput'],   // 合并区块的距离阈值，复用同一套联动
     ];
     pairs.forEach(([sliderId, inputIdId]) => {
         const slider = document.getElementById(sliderId);
@@ -1793,6 +1843,18 @@ function initGreenBoxModal() {
     // 重置 / 应用 按钮
     document.getElementById('filterResetBtn').addEventListener('click', resetGreenBoxFilter);
     document.getElementById('filterApplyBtn').addEventListener('click', applyGreenBoxFilter);
+
+    // 合并区块：直方图拖拽选阈值 + 阈值变化重绘直方图 + 合并按钮
+    // 注意「按距离合并绿框」按钮只调 mergeGreenBoxesByDistance（只合并），
+    // 与上面的 filterApplyBtn（只过滤）互不影响——这是用户要求的解耦
+    const mergeHist = document.getElementById('mergeDistHistogram');
+    if (mergeHist) initMergeDistHistogramDrag(mergeHist);
+    ['mergeDistSlider', 'mergeDistInput'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', renderMergeDistanceHistogram);
+    });
+    const mergeByDistBtn = document.getElementById('mergeByDistBtn');
+    if (mergeByDistBtn) mergeByDistBtn.addEventListener('click', mergeGreenBoxesByDistance);
 }
 
 // 拖动：从 header 拖动整个 dialog
@@ -1885,20 +1947,43 @@ function openGreenBoxModal() {
     autoAdjustRanges();
     updateFilterStats();
 
-    // 初始化位置和大小（仅首次，之后保持用户调整的位置）
+    // 合并区块：每次打开都重绘间距分布直方图（框对缓存自带过期判定，不必手动清）
+    renderMergeDistanceHistogram();
+
+    // 必须先显示再量尺寸：display:none 时 scrollHeight / offsetHeight 恒为 0，量不到内容高度。
+    // 同一帧内紧接着设 left/top/宽高，浏览器不会先画一个未定位的中间态，无闪烁。
+    modal.style.display = 'block';
+
+    // 初始化位置和大小（仅首次，之后保持用户调整的位置和大小）
     if (!dialog.dataset.initialized) {
         const w = 560;
-        const h = 453;
         const headerH = document.querySelector('.header').getBoundingClientRect().height;
+        const body = modal.querySelector('.modal-body');
+
+        // 位置与宽度先定下来，再量高度——宽度决定文字换行，进而决定内容高度。
+        // （踩过的坑：先量后设宽度，量到的是「另一个宽度下」的内容高度，
+        //   宽度一设完就溢出十几个像素。）
         // 右边距离屏幕右边 20px，顶部距离 header 底边紧贴
         dialog.style.left = (window.innerWidth - w - 20) + 'px';
         dialog.style.top = headerH + 'px';
         dialog.style.width = w + 'px';
-        dialog.style.height = h + 'px';
+
+        // 高度自适应：模态框里现在有「过滤」+「按距离合并」两个区块，
+        // 固定 453px 会把合并区块挤到折叠线以下，用户不滚动就看不到。
+        // 「量-设-再量」迭代收敛，而不是一次算完——body 出现滚动条后内容可用
+        // 宽度变化会让文字重新换行、内容高度随之变化，一次测量未必够。
+        // 上限 maxH 内仍放不下，就让它正常滚动（内容确实超出可视区时只能滚）。
+        const maxH = window.innerHeight - headerH - 24;   // 上限 = 可视区（底部留 24px）
+        let h = Math.min(453, maxH);
+        for (let i = 0; i < 3; i++) {
+            dialog.style.height = Math.max(320, Math.min(h, maxH)) + 'px';
+            if (!body || h >= maxH) break;
+            const overflow = body.scrollHeight - body.clientHeight;
+            if (overflow <= 0) break;   // 已放得下
+            h += overflow;              // 差多少补多少
+        }
         dialog.dataset.initialized = '1';
     }
-
-    modal.style.display = 'block';
 }
 
 function updateFilterMode() {
@@ -2141,6 +2226,7 @@ function applyGreenBoxFilter() {
     const filtered = masterBoxes.filter(pred);
     state.boxes = filtered;
     saveGreenBoxSettings();
+    renderMergeDistanceHistogram();   // 合并区块的直方图跟着刷新（只重绘，不参与过滤）
     drawCanvas();
     updateUI();
     // 不自动关闭模态，用户可看到对比效果
@@ -2150,6 +2236,270 @@ function applyGreenBoxFilter() {
 function resetGreenBoxFilter() {
     // 重置 = 直接调用开始识别逻辑
     handleDetect();
+}
+
+// ============== 按距离合并绿框（绿色框设置模态框内） ==============
+
+// 距离直方图量程（px）：与滑块 min/max 一致。只统计间距 ≤ 该值的框对——
+// 更远的框对「该不该合并」没有参考价值，也能避免统计量失控。
+const MERGE_DIST_MAX = 50;
+const MERGE_DIST_BINS = 25;   // 每格 2px（画布 500px 宽 → 每格 20px）
+
+// 框对缓存：[{a, b, gap}]，a/b 是绿框对象引用（不是下标——下标会随过滤/合并变化），
+// gap 是两框的边缘间距。只放 gap ≤ MERGE_DIST_MAX 的对。
+// 缓存原因：O(n²) 计算（n=1379 时约 95 万次比较），直方图重绘与滑块拖动都不该重算。
+//
+// 过期判定用「签名」而不是让每个改动绿框的地方记得清缓存——绿框会被识别、拖动、
+// 缩放、删除、过滤、合并改来改去，靠调用点逐个手动失效迟早漏一个，届时合并会
+// 静默地「一对都找不到」。签名不匹配就自动重算，见 getMergePairs。
+let mergePairCache = null;
+let mergePairCacheSig = null;
+
+/**
+ * 绿框集合的廉价签名（O(n)，相对 O(n²) 的建表可忽略）：数量 + 所有框坐标之和。
+ * 用于判断框对缓存是否过期。返回字符串，避免数量与坐标和互相干扰。
+ */
+function boxesSignature(boxes) {
+    let sum = 0;
+    for (const b of boxes) sum += b.x_min + b.y_min + b.x_max + b.y_max;
+    return boxes.length + ':' + sum;
+}
+
+/**
+ * 两个绿框之间的「边缘间距」——两矩形最接近处的直线距离。
+ *
+ * 算法（矩形间距的标准算法）：先分别求 x / y 方向的间隙，重叠方向的间隙记 0，
+ * 再对两个间隙取欧氏距离——
+ *     dx = max(0, max(a.x_min - b.x_max, b.x_min - a.x_max))
+ *     dy = max(0, max(a.y_min - b.y_max, b.y_min - a.y_max))
+ *     gap = √(dx² + dy²)
+ * 于是：交叠或包含 → 0（恒 ≤ 任何阈值，所以必然会参与合并）；同列上下相邻 → dy；
+ * 斜对角 → 两角之间的对角线长度。
+ *
+ * @param {Object} a 绿框 {x_min,y_min,x_max,y_max}
+ * @param {Object} b 绿框，同结构
+ * @returns {number} 边缘间距（像素，图片坐标；非负）
+ */
+function boxEdgeGap(a, b) {
+    const dx = Math.max(0, Math.max(a.x_min - b.x_max, b.x_min - a.x_max));
+    const dy = Math.max(0, Math.max(a.y_min - b.y_max, b.y_min - a.y_max));
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+// 读取当前阈值（滑块/输入框任一改动都同步到两者，所以读输入框即可）
+function getMergeDistValue() {
+    const input = document.getElementById('mergeDistInput');
+    const v = parseInt(input && input.value, 10) || 0;
+    return Math.max(0, Math.min(MERGE_DIST_MAX, v));
+}
+
+// 取框对列表（带缓存）。返回 [{a, b, gap}]，只含间距 ≤ MERGE_DIST_MAX 的对。
+// 签名一致才复用缓存，否则重算——绿框任何改动都会让签名变化，不需要调用方手动失效。
+function getMergePairs() {
+    const boxes = state.boxes || [];
+    const sig = boxesSignature(boxes);
+    if (mergePairCache && mergePairCacheSig === sig) return mergePairCache;
+
+    const out = [];
+    for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+            const gap = boxEdgeGap(boxes[i], boxes[j]);
+            if (gap <= MERGE_DIST_MAX) out.push({ a: boxes[i], b: boxes[j], gap });
+        }
+    }
+    mergePairCache = out;
+    mergePairCacheSig = sig;
+    return out;
+}
+
+/**
+ * 绘制「绿框边缘间距分布」直方图（合并区块用）。
+ *
+ * 横轴 = 边缘间距 0~MERGE_DIST_MAX（线性，每格 2px）；纵轴 = 落在该区间的框对数量。
+ * 阈值左侧的柱子高亮（这些框对会被本次合并吃掉），右侧灰显。
+ * 橙色竖线 = 当前阈值（对应滑块值），拖动竖线即改阈值（见 initMergeDistHistogramDrag）。
+ *
+ * 注意纵轴用的是「框对数量」而非「绿框数量」：合并不是逐框判断，而是成对判断，
+ * 所以框对数量才是用户调阈值时真正关心的量（拉高阈值会吃掉多少对）。
+ */
+function renderMergeDistanceHistogram() {
+    const canvas = document.getElementById('mergeDistHistogram');
+    if (!canvas) return;
+    const c = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    c.clearRect(0, 0, W, H);
+
+    const pairs = getMergePairs();
+    const binW = MERGE_DIST_MAX / MERGE_DIST_BINS;   // 每格多少 px
+    const bins = new Array(MERGE_DIST_BINS).fill(0);
+    for (const { gap } of pairs) {
+        let idx = Math.floor(gap / binW);
+        if (idx >= MERGE_DIST_BINS) idx = MERGE_DIST_BINS - 1;  // gap 恰为 MAX 时归最后一格
+        if (idx < 0) idx = 0;
+        bins[idx]++;
+    }
+    const maxCount = Math.max(...bins, 1);
+
+    const threshold = getMergeDistValue();
+    const padding = 4;
+    const chartW = W - padding * 2;
+    const chartH = H - padding * 2;
+    const colW = chartW / MERGE_DIST_BINS;
+
+    // 柱子：阈值左侧 = 会被合并的框对（高亮），右侧 = 不受影响（灰）
+    for (let i = 0; i < MERGE_DIST_BINS; i++) {
+        const x = padding + i * colW;
+        const h = bins[i] / maxCount * chartH;
+        const y = H - padding - h;
+        c.fillStyle = (i * binW <= threshold) ? '#4a90a4' : '#c8d0d8';
+        c.fillRect(x + 1, y, Math.max(1, colW - 2), h);
+    }
+
+    // 当前阈值竖线（橙色，与合并工具的橡皮框同色系）
+    const xT = padding + (threshold / MERGE_DIST_MAX) * chartW;
+    c.strokeStyle = '#f39c12';
+    c.lineWidth = 2;
+    c.beginPath(); c.moveTo(xT, 0); c.lineTo(xT, H); c.stroke();
+
+    // 没有近距框对时给一行提示，避免用户对着空图困惑
+    if (pairs.length === 0) {
+        c.fillStyle = '#999';
+        c.font = '12px sans-serif';
+        c.fillText(`没有边缘间距 ≤ ${MERGE_DIST_MAX}px 的绿框对`, padding + 6, H / 2);
+    }
+}
+
+/**
+ * 直方图拖拽选阈值：按下/拖动时把横坐标换算成阈值，写回滑块与输入框。
+ *
+ * 与面积直方图的拖拽不同，这里横轴是线性的，而且做了 CSS 缩放换算——
+ * canvas 的 CSS 宽度是 100%（可能不是 500px），只用 getBoundingClientRect 的
+ * 偏移会算错，必须乘 canvas.width / rect.width 还原到画布坐标。
+ */
+function initMergeDistHistogramDrag(canvas) {
+    if (!canvas) return;
+    let dragging = false;
+    canvas.style.cursor = 'crosshair';
+
+    function applyClientX(clientX) {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width === 0) return;
+        const scaleX = canvas.width / rect.width;          // 画布坐标 / CSS 像素
+        const padding = 4;
+        const chartW = canvas.width - padding * 2;
+        const x = Math.max(padding, Math.min(canvas.width - padding,
+                                            (clientX - rect.left) * scaleX));
+        const value = Math.max(0, Math.min(MERGE_DIST_MAX,
+                                          Math.round((x - padding) / chartW * MERGE_DIST_MAX)));
+        const input = document.getElementById('mergeDistInput');
+        const slider = document.getElementById('mergeDistSlider');
+        if (input) input.value = value;
+        if (slider) slider.value = value;
+        renderMergeDistanceHistogram();
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        dragging = true;
+        applyClientX(e.clientX);
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (dragging) applyClientX(e.clientX);
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+}
+
+/**
+ * 按距离阈值合并绿框：把边缘间距 ≤ 阈值的绿框各自并成一个大框。
+ *
+ * 与标题栏「合并绿色框」（拖框选那个）的区别：那个靠人手框选，这个按距离自动成组；
+ * 但两者的「合并动作」完全一致——新框 = 组内所有框的最小包围盒，走
+ * syncBoxDerived + clampBoxToImage，然后删旧框、加新框（照 performMerge 的做法）。
+ *
+ * 与过滤解耦：本函数不读、不写、不触发任何过滤条件（不碰 applyGreenBoxFilter），
+ * 只改绿框集合。但会同步绿框主集 masterBoxes——否则用户合并后再点「应用」，
+ * 过滤会从「未合并的主集」重建 state.boxes，合并白做。
+ *
+ * 成组用「连通分量」：A-B 近、B-C 近 → A/B/C 并成一组（连锁合并），
+ * 免得用户为链式相邻的碎片反复点按钮。交叠/包含的框间距为 0，恒参与合并。
+ */
+function mergeGreenBoxesByDistance() {
+    const threshold = getMergeDistValue();
+    const boxes = state.boxes || [];
+    if (boxes.length < 2) {
+        showToast('绿框不足 2 个，无需合并');
+        return;
+    }
+
+    // ---- 1. 并查集：间距 ≤ 阈值的框对归入同一组（连通分量）----
+    const pairs = getMergePairs();
+    const idxOf = new Map();
+    boxes.forEach((b, i) => idxOf.set(b, i));
+    const parent = Array.from({ length: boxes.length }, (_, i) => i);
+    const find = (i) => {
+        while (parent[i] !== i) {
+            parent[i] = parent[parent[i]];   // 路径压缩
+            i = parent[i];
+        }
+        return i;
+    };
+    for (const { a, b, gap } of pairs) {
+        if (gap > threshold) continue;
+        const i = idxOf.get(a), j = idxOf.get(b);
+        // 缓存过期兜底：框已不在当前集合（理论上不该发生，失效点已覆盖）
+        if (i === undefined || j === undefined) continue;
+        const ri = find(i), rj = find(j);
+        if (ri !== rj) parent[rj] = ri;
+    }
+
+    // ---- 2. 只保留「至少 2 个框」的组 ----
+    const groups = new Map();
+    for (let i = 0; i < boxes.length; i++) {
+        const root = find(i);
+        if (!groups.has(root)) groups.set(root, []);
+        groups.get(root).push(i);
+    }
+    const mergeGroups = Array.from(groups.values()).filter(g => g.length >= 2);
+    if (mergeGroups.length === 0) {
+        showToast(`没有边缘间距 ≤ ${threshold}px 的绿框，未做合并`);
+        return;
+    }
+
+    pushHistory();   // 合并前回退点（与 performMerge 一致）
+
+    // ---- 3. 每组并成一个大框（最小包围盒，动作同 performMerge）----
+    const mergedBoxes = [];
+    const removedBoxes = new Set();   // 被吃掉的旧框（按对象引用记，避免误删同值的其他框）
+    for (const group of mergeGroups) {
+        let mXmin = Infinity, mYmin = Infinity, mXmax = -Infinity, mYmax = -Infinity;
+        for (const idx of group) {
+            const box = boxes[idx];
+            if (box.x_min < mXmin) mXmin = box.x_min;
+            if (box.y_min < mYmin) mYmin = box.y_min;
+            if (box.x_max > mXmax) mXmax = box.x_max;
+            if (box.y_max > mYmax) mYmax = box.y_max;
+            removedBoxes.add(box);
+        }
+        const mergedBox = { x_min: mXmin, y_min: mYmin, x_max: mXmax, y_max: mYmax };
+        syncBoxDerived(mergedBox);
+        clampBoxToImage(mergedBox);   // 内部会再 syncBoxDerived 一次
+        mergedBoxes.push(mergedBox);
+    }
+
+    // ---- 4. 可见集合与主集同步替换 ----
+    // state.boxes 的框与 masterBoxes 里是同一批对象引用（主集靠 slice/展开复制而来），
+    // 所以按引用剔除即可同时清掉两边，再把合并框补进两边。
+    const beforeCount = boxes.length;
+    state.boxes = state.boxes.filter(b => !removedBoxes.has(b)).concat(mergedBoxes);
+    masterBoxes = masterBoxes.filter(b => !removedBoxes.has(b)).concat(mergedBoxes);
+    persistMasterBoxes();
+
+    markBoxModified();
+    drawCanvas();
+    updateUI();
+    updateFilterStats();              // 主集变了，刷新模态框里的过滤预览统计
+    renderMergeDistanceHistogram();   // 合并后再画一次，让用户看到还剩多少近距对
+    showToast(`已按 ≤${threshold}px 合并 ${mergeGroups.length} 组：绿框 ${beforeCount} → ${state.boxes.length} 个`);
 }
 
 // ============== 单个绿框编辑模态 ==============

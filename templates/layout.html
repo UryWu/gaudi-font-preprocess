@@ -53,6 +53,7 @@
                 <p><strong>删除绿框：</strong>Alt + 左键点击绿框</p>
                 <p><strong>标记绿框：</strong>Shift + 左键拖动框选区域，自动添加一个绿框</p>
                 <p><strong>合并绿框：</strong>Ctrl+Alt + 左键拖动（无需点按钮，松手即合并）；也可点标题栏「合并绿色框」按钮后再拖动</p>
+                <p><strong>按距离合并：</strong>「绿色框设置」里拖阈值滑块（或拖直方图竖线）后点「按距离合并绿框」，间距在阈值内的框自动并成一个</p>
                 <p><strong>框选删除：</strong>Alt + 左键拖动框选蓝线/红线/绿框（按 Delete 键删除选中的）</p>
                 <p><strong>纠偏：</strong>上传时自动校正倾斜，检测到的角度会以 toast 提示（标题栏可关闭）</p>
             </div>
@@ -111,7 +112,15 @@
         </div>
 
         <div class="panel-actions">
-            <button id="saveBtn" class="btn btn-secondary" disabled>存储切割线</button>
+            <!-- 「存储切割线 / 加载切割线」竖排成一对：存储是「画布 → cutting.json」，
+                 加载是「cutting.json → 画布」，两个方向的操作放一起。
+                 竖排容器见 static/css/style.css 的 .panel-actions-col -->
+            <div class="panel-actions-col">
+                <button id="saveBtn" class="btn btn-secondary" disabled>存储切割线</button>
+                <!-- 加载切割线：悬停提示明确指出读取位置（见 static/js/layout.js 的 loadCutLines） -->
+                <button id="loadBtn" class="btn btn-secondary" disabled
+                        title="在相应的 session id 里面寻找 cutting.json（data/sessions/&lt;session id&gt;/cutting.json），重新加载切割线配置">加载切割线</button>
+            </div>
             <button id="applyBtn" class="btn btn-success" disabled>应用切割</button>
         </div>
 
@@ -202,6 +211,29 @@
                 <span>总数 <strong id="filterTotalCount">0</strong></span>
                 <span>保留 <strong id="filterKeptCount">0</strong></span>
                 <span>过滤掉 <strong id="filterRemovedCount">0</strong></span>
+            </div>
+
+            <!-- 按距离合并绿框（与上方过滤解耦：本区块自带按钮，只合并、不触发过滤）
+                 「一个字被检测成几块」时用：把边缘间距在阈值内的碎片并成一个框。
+                 直方图 = 当前各绿框两两之间的边缘间距分布（只统计 ≤ 50px 的对），
+                 拖动橙色竖线即可挑阈值。逻辑见 static/js/layout.js 的 mergeGreenBoxesByDistance -->
+            <div class="merge-panel">
+                <h4>按距离合并绿框</h4>
+                <p class="section-hint">
+                    边缘间距 ≤ 阈值的绿框会并成一个（可连锁：A-B 近、B-C 近则三个并一起）。
+                    交叠/包含的框间距为 0，任何阈值下都会合并。
+                </p>
+                <canvas id="mergeDistHistogram" class="histogram-canvas" width="500" height="80"></canvas>
+                <div class="range-row">
+                    <div class="range-cell">
+                        <label>距离阈值（px）</label>
+                        <div class="slider-row">
+                            <input type="range" id="mergeDistSlider" min="0" max="50" value="5">
+                            <input type="number" id="mergeDistInput" min="0" value="5">
+                        </div>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary" id="mergeByDistBtn">按距离合并绿框</button>
             </div>
         </div>
         <div class="modal-footer">
@@ -295,5 +327,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/layout.js') }}?v=21"></script>
+<script src="{{ url_for('static', filename='js/layout.js') }}?v=25"></script>
 {% endblock %}

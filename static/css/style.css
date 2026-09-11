@@ -721,6 +721,32 @@ body {
     margin: 0 4px;
 }
 
+/* 绿框合并区块（在「绿色框设置」模态框内，与上方过滤区块解耦：独立按钮，只合并不过滤） */
+.merge-panel {
+    width: 100%;
+    box-sizing: border-box;
+    background-color: #f8f8f8;
+    padding: 12px;
+    border-radius: 6px;
+    margin-top: 12px;   /* 与上方过滤区块拉开距离，强调是两个独立操作 */
+}
+
+.merge-panel h4 {
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 8px;
+}
+
+/* 说明文字与直方图之间的间距（.section-hint 默认 margin 0 0 10px 0） */
+.merge-panel .section-hint {
+    line-height: 1.5;
+}
+
+/* 合并按钮撑满一行（.merge-panel 是普通块元素，按钮默认只占内容宽度） */
+.merge-panel .btn {
+    width: 100%;
+}
+
 .panel-section {
     margin-bottom: 20px;
 }
@@ -809,10 +835,27 @@ body {
     display: flex;
     gap: 10px;
     margin-bottom: 20px;
+    /* 左列竖排两个按钮后，右列「应用切割」会被拉伸到与左列同高——改为顶部对齐，
+       让各按钮保持自身内容高度 */
+    align-items: flex-start;
 }
 
 .panel-actions .btn {
     flex: 1;
+}
+
+/* 「存储切割线 / 加载切割线」竖排一列（加载在存储下面，两者成对） */
+.panel-actions-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+}
+
+/* 竖排时不要沿用 .panel-actions .btn 的 flex:1：列高由内容决定，
+   flex-basis:0 会让按钮高度塌陷/被拉伸得不可控 */
+.panel-actions-col .btn {
+    flex: none;
 }
 
 /* 页面导航按钮 */

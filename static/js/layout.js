@@ -77,9 +77,15 @@ document.addEventListener('DOMContentLoaded', () => {
 const HISTORY_LIMIT = 50;
 
 // 序列化当前 state 中可撤销的字段（深拷贝，避免快照被后续修改污染）
+//
+// 注意 masterBoxes（绿框主集）也必须进快照：识别、按距离合并、标记绿框、Alt 删除
+// 都会改它，而过滤是「state.boxes = masterBoxes.filter(...)」——主集不回滚的话，
+// 撤销后再点「应用」会把已撤销的改动又拉回来（撤销被抵消），模态框里的
+// 总数/保留/过滤掉 统计也会与画布对不上。
 function snapshotState() {
     return {
         boxes: JSON.parse(JSON.stringify(state.boxes || [])),
+        masterBoxes: JSON.parse(JSON.stringify(masterBoxes || [])),
         verticalLines: JSON.parse(JSON.stringify(state.verticalLines || [])),
         horizontalLines: JSON.parse(JSON.stringify(state.horizontalLines || [])),
         stripHorizontalLines: JSON.parse(JSON.stringify(state.stripHorizontalLines || [])),
@@ -91,6 +97,7 @@ function snapshotState() {
 // 从快照恢复 state（深拷贝）
 function restoreSnapshot(snap) {
     state.boxes = JSON.parse(JSON.stringify(snap.boxes || []));
+    masterBoxes = JSON.parse(JSON.stringify(snap.masterBoxes || []));
     state.verticalLines = JSON.parse(JSON.stringify(snap.verticalLines || []));
     state.horizontalLines = JSON.parse(JSON.stringify(snap.horizontalLines || []));
     state.stripHorizontalLines = JSON.parse(JSON.stringify(snap.stripHorizontalLines || []));
@@ -236,11 +243,26 @@ function setupEventListeners() {
     if (undoBtn) undoBtn.addEventListener('click', undo);
     if (redoBtn) redoBtn.addEventListener('click', redo);
 
-    // 删除键：删除框选中的项
+    // 键盘快捷键：Delete/Backspace 删除框选项、Ctrl+Z 撤销、Ctrl+Y（或 Ctrl+Shift+Z）重做
     document.addEventListener('keydown', (e) => {
         // 焦点在 input/textarea 时不拦截
+        // 撤销/重做也遵守这条：输入框里的 Ctrl+Z 交给浏览器（撤掉刚打的字），
+        // 否则会跟用户预期打架。点过画布或按钮后焦点不在输入框，快捷键照常可用。
         const tag = (e.target && e.target.tagName) || '';
         if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) {
+            return;
+        }
+        // 撤销/重做（与标题栏按钮 title 标注的 Ctrl+Z / Ctrl+Y 一致）
+        if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+            e.preventDefault();
+            undo();
+            return;
+        }
+        if (e.ctrlKey && !e.altKey &&
+            ((e.key === 'y' || e.key === 'Y') ||
+             (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
+            e.preventDefault();
+            redo();
             return;
         }
         if (e.key === 'Delete') {

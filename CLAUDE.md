@@ -2,7 +2,7 @@
 
 ## 项目概览
 
-`gaudi-font-preprocess` 是一个面向书法爱好者的字库预处理 Flask Web 应用。用户上传手写书法长篇图片，应用自动/手动切割成单字图，统一尺寸后导出 FontLab 标准命名（`uniXXXX.bmp` / `uXXXXX.bmp`）的白底黑字素材。详见 [README.md](README.md) 与 [高迪书法字库预处理工具版本历史.md](高迪书法字库预处理工具版本历史.md)。
+`gaudi-font-preprocess` 是一个面向书法爱好者的字库预处理 Flask Web 应用。用户上传手写书法长篇图片，应用自动/手动切割成单字图，统一尺寸后导出 FontLab 标准命名的白底黑字训练包（`uniXXXX.png` / `uXXXXX.png` + CSV + source_map，见 [docs/数据存储说明.md](docs/数据存储说明.md)）。详见 [README.md](README.md) 与 [高迪书法字库预处理工具版本历史.md](高迪书法字库预处理工具版本历史.md)。
 
 **主仓库**：<https://github.com/gaudi1209/gaudi-font-preprocess>
 **关联项目**：<https://github.com/gaudi1209/ai-font-tool>（基于 zi2zi 的 AI 字体生成）
@@ -28,13 +28,18 @@ gaudi-font-preprocess/
 │   └── images/                  # 静态图片资源
 ├── utils/                       # 图像/OCR/切割/存储 业务模块
 │   ├── image_processor.py       # 二值化、缩放、deskew、哈希
-│   ├── ocr_handler.py           # EasyOCR 文本框检测
+│   ├── ocr_handler.py           # RapidOCR 文本框检测 + 字符识别（onnxruntime）
 │   ├── cut_analyzer.py          # 切割线算法（竖线 + 按列分组的横线）
 │   ├── scale_processor.py       # 缩放校正
 │   ├── empty_detector.py        # 空白切片检测
 │   └── storage.py               # 会话 JSON 读写
-├── data/sessions/{hash}.json    # 切割线 + 文本框配置（按图片哈希存）
-├── output/{hash}/               # 切割字符图 + 缩放图 + 导出目录
+├── data/sessions/<hash>/        # 一个批次的所有数据都在这（见 docs/数据存储说明.md）
+│   ├── cutting.json             #   切割线 + 绿框配置
+│   ├── ocr_annotations.json     #   OCR 标注（按字符文件名索引）
+│   ├── ocr_tasks/               #   OCR 后台任务状态
+│   ├── cutting_output/          #   切割字符图 char_NNNN.png
+│   ├── scaled/                  #   缩放校正后 scaled_NNNN.png
+│   └── exported/                #   导出训练包（PNG + CSV + source_map）
 ├── docs/                        # 任务书与说明文档
 │   ├── 任务书_页面1_切割布局.md
 │   ├── 任务书_页面2_切割调整.md
@@ -43,13 +48,18 @@ gaudi-font-preprocess/
 │   ├── 数据存储说明.md
 │   ├── 倾斜校正说明.md
 │   ├── 切割线三色说明.md
-│   └── 文本框检测说明.md
+│   ├── 文本框检测说明.md
+│   ├── 绿色框合并说明.md
+│   └── …（另有 OCR 调研/优化、性能优化、迁移评估等专题文档）
 └── my_font/                     # 测试样例图片
 ```
 
+> `config.py` 的 `OUTPUT_FOLDER` 现在与 `DATA_FOLDER` 同值（`config.py:20`），只是给老代码留的兼容别名，
+> 早期版本它独立指向 `<BASE_DIR>/output`，已废弃。
+
 ## 技术栈
 
-- 后端：Python 3.10+、Flask 3.0、OpenCV 4.9、Pillow 10、EasyOCR 1.7、OpenCC、NumPy
+- 后端：Python 3.10+、Flask 3.0、OpenCV 4.10+、Pillow 10、RapidOCR（onnxruntime，PaddleOCR 的 ONNX 移植版）、OpenCC、NumPy
 - 前端：原生 JS + Canvas，无构建步骤（直接 `<script src="...">` 引用）
 - 打包：PyInstaller（`sys.frozen` 判断源码 vs 打包环境，见 `app.py`、`config.py`）
 
@@ -69,19 +79,21 @@ pip install -r requirements.txt
 
 | # | 页面 | 模板 | 主 JS | 关键产出 |
 |---|------|------|-------|----------|
-| 1 | 切割布局 | `layout.html` | `static/js/layout.js` | `data/sessions/{hash}.json` |
+| 1 | 切割布局 | `layout.html` | `static/js/layout.js` | `data/sessions/<hash>/cutting.json` |
 | 2 | 切割调整 | `adjust.html` | `static/js/adjust.js` | 删除噪点/错字切片 |
-| 3 | 缩放校正 | `scale.html` | `static/js/scale.js` | `output/{hash}/scaled/*.png` |
-| 4 | 标注出图 | `annotate.html` | `static/js/annotate.js` | `output/{hash}/exported/{ts}/` |
-| 5 | 导出 | （页面4内） | （同上） | `uniXXXX.bmp` / `uXXXXX.bmp` + CSV |
+| 3 | 缩放校正 | `scale.html` | `static/js/scale.js` | `data/sessions/<hash>/scaled/*.png` |
+| 4 | 标注出图 | `annotate.html` | `static/js/annotate.js` | `data/sessions/<hash>/exported/<时间戳>/` |
+| 5 | 导出训练包 | （页面4内） | （同上） | `uniXXXX[_NN].png` + `fontlab_<ts>.csv` + `.source_map.json`（同一子目录）|
 
 完整说明与算法/坑点见 `docs/任务书_页面N_*.md`；数据落盘规则见 `docs/数据存储说明.md`。
 
 ## 关键约定
 
-- **图片哈希**：原图 MD5 决定 `{hash}`，同名图片复用会话（见 `utils/image_processor.py` 的 `compute_hash`）。
-- **路径兼容**：所有路径经 `RESOURCE_DIR` 解析（`config.py:5`），源码运行用项目目录，打包运行用 `sys._MEIPASS`。
-- **目标高度**：`TARGET_HEIGHT = 4096`（`config.py:20`），所有图片按此等比缩放后再处理。
+- **图片哈希**：`{hash}` = 上传**文件内容**的 MD5（不是文件名，见 `utils/image_processor.py` 的 `compute_hash`）；
+  同一张图（字节相同）再上传会复用会话。`/annotate` 的「导入目录」是另一套规则（目录路径字符串 MD5 截 16 位）。
+  详见 [docs/数据存储说明.md](docs/数据存储说明.md) 的「会话标识怎么确定」。
+- **路径兼容**：所有路径经 `RESOURCE_DIR` 解析（见 `config.py`），源码运行用项目目录，打包运行用 `sys._MEIPASS`。
+- **目标高度**：`TARGET_HEIGHT = 4096`（`config.py:23`），所有图片按此等比缩放后再处理。
 - **CJK 扩展区**：字符处理统一用 `Array.from()` + `codePointAt(0)`，避免代理对截断（详见版本历史 2026-04-14）。
 - **命名规范**：BMP 区 `uniXXXX`，扩展区 `uXXXXX`；重复字加 `_01`、`_02` 后缀。
 - **三色切割线**：红=竖向列边界、蓝=横向行边界（按列独立）、绿=OCR 文本框（可直接作为切割区域）；详见 `docs/切割线三色说明.md`。

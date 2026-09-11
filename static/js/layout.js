@@ -2249,10 +2249,15 @@ const MERGE_DIST_BINS = 25;   // 每格 2px（画布 500px 宽 → 每格 20px�
 // gap 是两框的边缘间距。只放 gap ≤ MERGE_DIST_MAX 的对。
 // 缓存原因：O(n²) 计算（n=1379 时约 95 万次比较），直方图重绘与滑块拖动都不该重算。
 //
-// 过期判定用「签名」而不是让每个改动绿框的地方记得清缓存——绿框会被识别、拖动、
-// 缩放、删除、过滤、合并改来改去，靠调用点逐个手动失效迟早漏一个，届时合并会
-// 静默地「一对都找不到」。签名不匹配就自动重算，见 getMergePairs。
+// 过期判定用「数组实例 + 签名」双校验，而不是让每个改动绿框的地方记得清缓存——
+// 绿框会被识别、拖动、缩放、删除、过滤、撤销改来改去，靠调用点逐个手动失效迟早漏一个。
+// 为什么两者都要（缺一就会静默不合并）：
+//   - 只比签名：撤销（restoreSnapshot）与过滤会把 boxes 换成「坐标完全相同的深拷贝」，
+//     签名一样但缓存里的 {a,b} 还是旧对象 → 合并时按引用一个都对不上 → 一对都不合并
+//   - 只比实例：拖动/缩放是原地改坐标，数组实例不变 → 间距已变却仍用旧缓存
+// 见 getMergePairs。
 let mergePairCache = null;
+let mergePairCacheRef = null;
 let mergePairCacheSig = null;
 
 /**
@@ -2294,11 +2299,14 @@ function getMergeDistValue() {
 }
 
 // 取框对列表（带缓存）。返回 [{a, b, gap}]，只含间距 ≤ MERGE_DIST_MAX 的对。
-// 签名一致才复用缓存，否则重算——绿框任何改动都会让签名变化，不需要调用方手动失效。
+// 数组实例与签名都一致才复用缓存，否则重算——绿框任何改动都会让其中之一变化，
+// 不需要调用方手动失效（理由见上方 mergePairCache 的注释）。
 function getMergePairs() {
     const boxes = state.boxes || [];
     const sig = boxesSignature(boxes);
-    if (mergePairCache && mergePairCacheSig === sig) return mergePairCache;
+    if (mergePairCache && mergePairCacheRef === boxes && mergePairCacheSig === sig) {
+        return mergePairCache;
+    }
 
     const out = [];
     for (let i = 0; i < boxes.length; i++) {
@@ -2308,6 +2316,7 @@ function getMergePairs() {
         }
     }
     mergePairCache = out;
+    mergePairCacheRef = boxes;
     mergePairCacheSig = sig;
     return out;
 }

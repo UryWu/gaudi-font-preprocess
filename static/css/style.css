@@ -615,6 +615,18 @@ body {
     flex-direction: column;
 }
 
+/* 绿色框设置模态框的正文必须能滚动。
+   踩过的坑：本文件后面「调整弹窗」那组里还有一条 `.modal-body { overflow: hidden }`，
+   它本意是给调整页弹窗的预览区做横向布局，但那个弹窗的结构是
+   `.modal-content > .preview-area + .modal-sidebar`——**根本没有 .modal-body 元素**，
+   所以那条规则对它是失效的，却因为选择器同权重、又出现在后面，把上面的
+   `overflow-y: auto` 盖掉了。结果：内容超出时被直接裁掉，短屏下底部的
+   「按距离合并绿框」按钮完全点不到（不是没滚动条，是被 clip 了）。
+   这里用 ID 选择器提高优先级，把滚动加回来。 */
+#greenBoxModal .modal-body {
+    overflow-y: auto;
+}
+
 .form-row,
 .filter-panel,
 .filter-stats {

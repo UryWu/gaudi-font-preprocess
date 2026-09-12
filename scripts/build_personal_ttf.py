@@ -106,9 +106,8 @@ def parse_args(argv=None):
     metric_args.add_argument("--descent", type=int, default=-409)
     metric_args.add_argument("--canvas-ratio", type=float, default=0.9,
                              help="512 画布换算到 em 的比例（默认 0.9 → 缩放系数 1843/512）。"
-                                  "注意：比例取自画布，但字形墨迹会被**重新居中**放到 em 框里"
-                                  "（水平居中；底边距 baseline 为 em 的 5%）——"
-                                  "所以画布自身的留白与位置不保留，贴角放置的标点也会被挪到中间")
+                                  "整张画布线性映射到 em 框（画布水平居中、底边距 baseline 为 em 的 5%），"
+                                  "所以字形在画布里的位置会被保留——贴角放置的标点仍是贴角")
     metric_args.add_argument("--baseline-pad-ratio", type=float, default=0.05,
                              help="字形底边与 baseline 的距离占 em 的比例（默认 0.05）")
 
@@ -215,35 +214,38 @@ def build_glyph(mask, upm, canvas_units, baseline_pad):
     把笔画掩码转成一个 TrueType 字形。
 
     做法：按列扫描，每列里每段连续笔画生成一个 4 点闭合矩形。不用 potrace
-    这类描边工具，代价是轮廓呈阶梯状（见模块 docstring 的「已知限制」）。
+    这类描边工具，代价是轮廓呈阶梯状（这是刻意保留手写笔触瑕疵的取舍，见模块 docstring）。
 
-    坐标系：图片左上角为原点、y 向下；字形坐标 y 向上、baseline 为 0。
+    映射方式：**整张画布线性映射到 em**（不是按墨迹包围盒对齐）。
+      - 水平：画布居中于 em 框，画布坐标直接乘以缩放系数
+      - 垂直：画布底边落在 baseline 之上 baseline_pad 处，y 轴方向翻转
+    这样字形在画布里的位置会被保留 —— 贴角放置的标点（见 /annotate 的角对齐）
+    到字体里仍贴角，不会被挪到中间。
 
-    缩放系数取自**画布**（512 px → canvas_units），但墨迹随后会被**重新居中**：
-    水平居中于 em 框、底边距 baseline 固定为 5% em。也就是说画布自身的留白与
-    位置**不保留** —— 若以后需要「保留贴角标点在格子里的位置」，得把这里改成
-    「整张画布线性映射到 em」（x 直接用画布坐标、y 从画布底边起算），而不是按墨迹包围盒对齐。
+    坐标系：图片左上角为原点、y 向下（0 = 画布顶）；字形坐标 y 向上、baseline 为 0。
+
+    注意：早期版本按「墨迹包围盒」对齐（墨迹居中于 em），而且 y 映射写反了
+    （把图里靠上的行映射到字形里更低的位置）—— 结果是字形上下**翻转**。
+    两处都已修，若再改这段务必核对方向。
     """
     px = mask.load()
     size = PNG_SIZE
     scale = canvas_units / float(size)
 
-    # 先求墨迹包围盒（后续所有坐标都相对它算，这样字形贴着画布边也没关系）
-    xs, ys = [], []
+    # 画布水平居中于 em 框（画布宽 = size*scale，两侧各留这么多）
+    x_pad = (upm - size * scale) / 2.0
+
+    # 墨迹包围盒只用来判断「这张图是不是空白」，不再参与定位
+    has_ink = False
     for x in range(size):
         for y in range(size):
             if px[x, y]:
-                xs.append(x)
-                ys.append(y)
-    if not xs:
-        return None, 0   # 整图无笔画
-
-    x_min, x_max = min(xs), max(xs)
-    y_min, y_max = min(ys), max(ys)
-    ink_w = (x_max - x_min + 1) * scale
-
-    # em 框内水平居中
-    x_offset = (upm - ink_w) / 2.0
+                has_ink = True
+                break
+        if has_ink:
+            break
+    if not has_ink:
+        return None   # 整图无笔画
 
     pen = TTGlyphPen(None)
     for x in range(size):
@@ -255,11 +257,15 @@ def build_glyph(mask, upm, canvas_units, baseline_pad):
             while y < size and px[x, y] == 1:
                 y += 1
             if y > y_start:
-                x_left = (x - x_min) * scale + x_offset
+                x_left = x * scale + x_pad
                 x_right = x_left + scale
-                # 图片 y 向下 → 字形 y 向上：底边从 baseline_pad 起算
-                y_bottom = baseline_pad + (y_start - y_min) * scale
-                y_top = baseline_pad + (y - y_min) * scale
+                # 图片 y 向下（0=画布顶）→ 字形 y 向上（0=baseline）：
+                # 画布最下一行落在 baseline_pad 处，越靠上的行字形 y 越大。
+                # 一行像素占 [y_i, y_i+1) 的图像区间，映射后：
+                #   该行下边缘 → baseline_pad + (size - y_i - 1) * scale
+                # 于是整段（上边缘行 y_start、下边缘行 y-1）是：
+                y_bottom = baseline_pad + (size - y) * scale
+                y_top = baseline_pad + (size - y_start) * scale
                 pen.moveTo((x_left, y_bottom))
                 pen.lineTo((x_right, y_bottom))
                 pen.lineTo((x_right, y_top))
@@ -314,7 +320,7 @@ def main(argv=None):
     fb.setupCharacterMap(cmap)
     fb.setupGlyf(glyphs)    # 这一步会算好每个字形的包围盒（xMin/xMax/yMin/yMax）
 
-    # hmtx：advance 统一取整个 em 框（CJK 字体每字占一个等宽方格，墨迹已居中其中，
+    # hmtx：advance 统一取整个 em 框（CJK 字体每字占一个等宽方格，字形已落在 em 框内，
     # 不会溢出步进框）；**lsb 必须等于该字形的 xMin**（TrueType 惯例）。
     # 把 lsb 写成 0 会让 FreeType/PIL 这类渲染器按 lsb 定位，字形整体左移 xMin ——
     # 实测：lsb=0 时 PIL 渲染的墨迹左边界恒等于笔位（本例偏了 37~125px），

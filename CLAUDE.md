@@ -33,6 +33,8 @@ gaudi-font-preprocess/
 │   ├── scale_processor.py       # 缩放校正
 │   ├── empty_detector.py        # 空白切片检测
 │   └── storage.py               # 会话 JSON 读写
+├── scripts/                     # 独立命令行工具（不属于网页应用运行时）
+│   └── build_personal_ttf.py    # 把导出的字形图打包成 TTF（需 uv sync --extra ttf）
 ├── data/sessions/<hash>/        # 一个批次的所有数据都在这（见 docs/数据存储说明.md）
 │   ├── cutting.json             #   切割线 + 绿框配置
 │   ├── ocr_annotations.json     #   OCR 标注（按字符文件名索引）
@@ -73,7 +75,23 @@ python app.py                     # 直接启动
 # 依赖（uv 优先，pip 也行）
 uv sync
 pip install -r requirements.txt
+
+# 可选：把导出的字形图打包成 TTF 字体（给 ai-font-tool 当 REF_FONT 用）
+uv sync --extra ttf               # 首次需装 fonttools
+python scripts/build_personal_ttf.py --session <会话hash> --out <字体路径>
+python scripts/build_personal_ttf.py -h        # 全部参数见帮助
 ```
+
+> ⚠️ **`uv sync` 会把「没在 pyproject.toml 里声明」的包装卸掉**。本机为 GPU 加速 OCR
+> 手动装过 `onnxruntime-gpu==1.18.1`（它和 `onnxruntime` 装同一批文件，属于覆盖式安装），
+> 跑一次 `uv sync` 就会把它删掉、`import onnxruntime` 直接失败。误删后这样装回来：
+>
+> ```bash
+> uv pip install "onnxruntime-gpu==1.18.1"     # 用 uv pip install，它不会顺手卸别的
+> ```
+>
+> 同理，**不要**把 `onnxruntime-gpu` 声明进 pyproject（会和 rapidocr 依赖的 CPU 版
+> `onnxruntime` 抢同一批文件，装出坏环境）。
 
 ## 工作流（五个页面）
 

@@ -14,5 +14,11 @@ dependencies = [
     "rapidocr-onnxruntime>=1.4.4",
 ]
 
+[project.optional-dependencies]
+# 可选：只有 scripts/build_personal_ttf.py（把导出的字形图打包成 TTF 字体）需要它。
+# 装法：uv sync --extra ttf
+# 不放进主依赖，是因为网页应用本身完全不碰字体文件，没必要让所有用户都装
+ttf = ["fonttools>=4.64"]
+
 [tool.uv]
 package = false

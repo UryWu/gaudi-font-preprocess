@@ -337,7 +337,10 @@
 .card-grid-container {
     flex: 1;
     overflow: auto;
-    padding: 20px;
+    /* 上内边距为 0：里面的搜索栏是 position: sticky，而**sticky 元素的上外边距不生效**
+       （实测 -20px/-60px 都推不动它），所以只能从容器这里让位，
+       搜索栏才能紧贴上面的操作栏。左右/下内边距不变。 */
+    padding: 0 20px 20px;
     position: relative;  /* 锚点：让内部 .card-search-tip 可以 absolute 定位 */
 }
 
@@ -347,7 +350,9 @@
     grid-auto-rows: min-content;
     gap: 15px;
     max-width: 1600px;
-    margin: 0 auto;
+    /* 上边距 20px：搜索栏隐藏时（如只剩空状态）也要与上方留出间距。
+       搜索栏可见时它与搜索栏的 20px 下边距折叠，仍是 20px，不会变双份 */
+    margin: 20px auto 0;
 }
 
 /* 字符卡片 - 长方形（覆盖全局样式） */
@@ -493,13 +498,17 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
+    padding: 8px 20px;          /* 左右与上面的操作栏、下面的卡片区都对齐到 20px */
     background: #fff;
     border-bottom: 1px solid #e0e0e0;
     position: sticky;
     top: 0;
     z-index: 5;
     position: -webkit-sticky;  /* Safari fallback */
+    /* 白条与上面的操作栏一样通栏、并紧贴它（容器上内边距已设为 0，见 .card-grid-container）：
+       左右用负外边距抵消容器的内边距 → 通栏；下方留 20px 与卡片分开（与 .card-grid 的
+       margin-top 折叠后仍是 20px） */
+    margin: 0 -20px 20px;
 }
 
 /* container for search bar + tip absolute positioning */

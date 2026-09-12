@@ -136,23 +136,8 @@
 }
 
 /* 操作按钮 */
-.action-buttons {
-    display: flex;
-    gap: 10px;
-    padding: 10px 20px;
-    background-color: #fff;
-    border-bottom: 1px solid #e0e0e0;
-}
-
-.action-btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-weight: 500;
-}
+/* （.action-buttons / .action-btn 两条规则已删：按钮块并入 .toolbar 后，
+   这两个类在本页不再有任何元素使用；配套的 OCR 阈值、字符计数也搬进工具栏） */
 
 .btn-annotate {
     background-color: #7B9A9D;
@@ -202,13 +187,14 @@
     cursor: not-allowed;
 }
 
-/* OCR 阈值滑块 + 进度条 */
+/* OCR 阈值滑块 + 进度条（现为工具栏的一个子项，见 annotate.html 的 .toolbar）
+   flex 不设 grow：工具栏一行里要同时排下搜索框/字符数/繁简切换，
+   让它按内容宽度占位、不够时由 flex-wrap 自动换行，别去挤别的元素 */
 .ocr-config {
     display: flex;
     align-items: center;
-    gap: 16px;
-    flex: 1;
-    margin-left: 10px;
+    gap: 12px;
+    flex: 0 1 auto;
     font-size: 12px;
     color: #666;
 }
@@ -231,12 +217,16 @@
     text-align: right;
 }
 
+/* 进度条上限从 320px 收到 130px：OCR / 导出时工具栏那行还要放搜索框和繁简切换，
+   320px 会把整行挤到下一行去（实测 1280 窗口下多出一整行 = 卡片区少 43px）；
+   130px 足够看出进度比例 */
 .ocr-progress {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex: 1;
-    max-width: 320px;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 130px;
 }
 
 .ocr-progress-bar {
@@ -257,7 +247,10 @@
 .ocr-progress-text {
     font-size: 11px;
     color: #888;
-    min-width: 90px;
+    /* min-width 从 90px 收到 76px 且不换行：文字本身约 76px（如「741/741 (100%)」），
+       原来那 90px 是给「准备导出 N 张…」留的余量，在工具栏里太奢侈 */
+    min-width: 76px;
+    white-space: nowrap;
     text-align: right;
 }
 
@@ -318,14 +311,17 @@
     background-color: #C4A484;  /* 莫兰迪棕：低置信（仍填了但用户需复查） */
 }
 
-/* 字符计数 */
+/* 字符计数（现为工具栏的一个子项）
+   注意**不要**再写 margin-left:auto：工具栏里 .mode-toggle 已有 auto，
+   两个 auto 会把剩余空间对半分，字符数会被推到行中间、和搜索框分家。
+   字号也从 13px 收到 12px，与同行的 OCR 阈值文字一致 */
 .char-count-info {
-    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 15px;
-    font-size: 13px;
+    font-size: 12px;
     color: #666;
+    white-space: nowrap;   /* 「字符数: 0 / 卡片数: 741」别被折断成两行 */
 }
 
 .char-count-info span {
@@ -337,9 +333,10 @@
 .card-grid-container {
     flex: 1;
     overflow: auto;
-    /* 上内边距为 0：里面的搜索栏是 position: sticky，而**sticky 元素的上外边距不生效**
-       （实测 -20px/-60px 都推不动它），所以只能从容器这里让位，
-       搜索栏才能紧贴上面的操作栏。左右/下内边距不变。 */
+    /* 上内边距为 0：与 .card-grid 的 margin-top:20px 配合出 20px 间距
+       （padding 不会和子元素 margin 折叠，所以只能留一边）。
+       历史上这里是为了给 sticky 搜索栏让位——搜索栏已搬进工具栏，理由不再适用，
+       但 0 上边距本身仍然是对的，故保留。 */
     padding: 0 20px 20px;
     position: relative;  /* 锚点：让内部 .card-search-tip 可以 absolute 定位 */
 }
@@ -493,22 +490,28 @@
     z-index: 2;
 }
 
-/* 卡片搜索栏：固定在网格上方 */
+/* 卡片搜索栏：现为工具栏的一个子项（.toolbar 的第 2 行左侧）。
+   历史上一度放在滚动容器 .card-grid-container 内部并 position:sticky 常驻顶部，
+   白占 46px 视口；搬进工具栏后它本身就在滚动区之外，「始终可见」由布局天然保证，
+   不再需要 sticky —— 顺带避开了 sticky 元素上外边距失效的坑。 */
 .card-search-bar {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 20px;          /* 左右与上面的操作栏、下面的卡片区都对齐到 20px */
-    background: #fff;
-    border-bottom: 1px solid #e0e0e0;
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    position: -webkit-sticky;  /* Safari fallback */
-    /* 白条与上面的操作栏一样通栏、并紧贴它（容器上内边距已设为 0，见 .card-grid-container）：
-       左右用负外边距抵消容器的内边距 → 通栏；下方留 20px 与卡片分开（与 .card-grid 的
-       margin-top 折叠后仍是 20px） */
-    margin: 0 -20px 20px;
+    background: transparent;    /* 工具栏底色已是白色，不必再叠一层 */
+    border-bottom: none;        /* 不再需要分隔线，宽度也不通栏了 */
+    /* position:relative 有两个作用：① 让里面的 .card-search-tip 绝对定位有锚点
+       （sticky 也能当锚点，但已经不用 sticky 了）；② 建立层叠上下文，气泡压在输入区之上 */
+    position: relative;
+    /* 让搜索框吃掉工具栏该行的剩余宽度：grow 1、基准 200px、上限 280px。
+       上限 280 是实测的临界点：1280 窗口 + OCR 进度条可见时，
+       340px 会把「标注输入框显示开关」挤到第 3 行（工具栏 109→152px，卡片区少 43px），
+       280px 正好收得下。
+       代价：280px 装不下原来的占位符「字符 / U+4E2D / 1-50（空格 AND 组合）」，
+       被截成「1-50（空」；已把占位符缩为「字符 / U+4E2D / 1-50」，
+       「空格 AND 组合」的说明本来就在 ? 气泡里有，不必挤在占位符里 */
+    flex: 1 1 200px;
+    max-width: 280px;
 }
 
 /* container for search bar + tip absolute positioning */
@@ -957,6 +960,48 @@ kbd {
         <button id="saveAnnotBtn" class="toolbar-btn btn-save-annot" disabled title="把当前所有卡的人工标注写入 ocr_annotations.json（OCR 自动填的不需要重复保存）">💾 保存标注</button>
         <button id="clearBtn" class="toolbar-btn btn-clear">清空</button>
 
+        <!-- 搜索栏 / 字符计数 / OCR 参数：原先分散在「操作栏」一整行（.action-buttons）
+             和滚动容器内部（.card-search-bar 是 sticky，常驻占 46px）。
+             现在统一并进工具栏 —— 工具栏第 2 行左侧本来就有约 990px 空白
+             （.mode-toggle 的 margin-left:auto 把右侧两组元素顶到了最右），
+             正好容纳这三块，既不多占一行，又把滚动区里的 46px 还给了卡片。 -->
+        <div class="card-search-bar" id="cardSearchBar" style="display: none;">
+            <span class="card-search-icon">🔍</span>
+            <input type="text" id="cardSearchInput" placeholder="字符 / U+4E2D / 1-50" autocomplete="off">
+            <button class="card-search-help" id="cardSearchHelp" title="查看搜索用法">?</button>
+            <span class="card-search-count" id="cardSearchCount">0/0</span>
+            <button class="card-search-clear" id="cardSearchClear" title="清空搜索 (Esc)">✕</button>
+            <!-- 用法提示气泡（点击 ? 弹出 / 外部点击关闭）：绝对定位锚在 .card-search-bar 上 -->
+            <div class="card-search-tip" id="cardSearchTip" hidden>
+                <div class="card-search-tip-header">搜索用法</div>
+                <table class="card-search-tip-table">
+                    <tr><td><code>中</code></td><td>含「中」字的卡（简体或繁体）</td></tr>
+                    <tr><td><code>U+4E2D</code></td><td>U+4E2D = 「中」</td></tr>
+                    <tr><td><code>4E2D</code></td><td>同上，省略 U+ 前缀</td></tr>
+                    <tr><td><code>42</code></td><td>第 42 张（1-based）</td></tr>
+                    <tr><td><code>1-50</code></td><td>第 1 到 50 张</td></tr>
+                    <tr><td><code>中 1-50</code></td><td>前 50 张里含「中」字（空格 AND 组合）</td></tr>
+                </table>
+                <div class="card-search-tip-footer">⌨ 按 <kbd>/</kbd> 聚焦搜索框 · <kbd>Esc</kbd> 清空</div>
+            </div>
+        </div>
+
+        <div class="char-count-info">
+            字符数: <span id="inputCount">0</span> / 卡片数: <span id="cardCount">0</span>
+        </div>
+
+        <div class="ocr-config" id="ocrConfig" style="display: none;">
+            <label title="仅填入置信度 ≥ 此值的识别结果（书法 OCR 准确率低，建议 0.5+）">
+                阈值:
+                <input type="range" id="ocrThreshold" min="10" max="90" value="50" step="5">
+                <span id="ocrThresholdValue">0.50</span>
+            </label>
+            <div class="ocr-progress" id="ocrProgress" style="display: none;">
+                <div class="ocr-progress-bar"><div class="ocr-progress-fill" id="ocrProgressFill"></div></div>
+                <span class="ocr-progress-text" id="ocrProgressText">就绪</span>
+            </div>
+        </div>
+
         <!-- 繁简切换 -->
         <div class="mode-toggle">
             <button id="mixedMode" class="mode-btn active">繁简混合</button>
@@ -986,48 +1031,8 @@ kbd {
         </div>
     </div>
 
-    <!-- 操作按钮已并入工具栏；这里只剩 OCR 阈值/进度 与 字符计数这两项状态信息
-         （它们不是按钮，故按原样保留在原位置） -->
-    <div class="action-buttons">
-        <div class="ocr-config" id="ocrConfig" style="display: none;">
-            <label title="仅填入置信度 ≥ 此值的识别结果（书法 OCR 准确率低，建议 0.5+）">
-                阈值:
-                <input type="range" id="ocrThreshold" min="10" max="90" value="50" step="5">
-                <span id="ocrThresholdValue">0.50</span>
-            </label>
-            <div class="ocr-progress" id="ocrProgress" style="display: none;">
-                <div class="ocr-progress-bar"><div class="ocr-progress-fill" id="ocrProgressFill"></div></div>
-                <span class="ocr-progress-text" id="ocrProgressText">就绪</span>
-            </div>
-        </div>
-        <div class="char-count-info">
-            字符数: <span id="inputCount">0</span> / 卡片数: <span id="cardCount">0</span>
-        </div>
-    </div>
-
-    <!-- 卡片网格 -->
+    <!-- 卡片网格（搜索栏/字符计数/OCR 参数都已并入上方工具栏，滚动区里只剩卡片） -->
     <div class="card-grid-container">
-        <!-- 搜索栏：键盘 / 聚焦 + Enter 实时过滤 -->
-        <div class="card-search-bar" id="cardSearchBar" style="display: none;">
-            <span class="card-search-icon">🔍</span>
-            <input type="text" id="cardSearchInput" placeholder="字符 / U+4E2D / 1-50（空格 AND 组合）" autocomplete="off">
-            <button class="card-search-help" id="cardSearchHelp" title="查看搜索用法">?</button>
-            <span class="card-search-count" id="cardSearchCount">0/0</span>
-            <button class="card-search-clear" id="cardSearchClear" title="清空搜索 (Esc)">✕</button>
-            <!-- 用法提示气泡（点击 ? 弹出 / 外部点击关闭） -->
-            <div class="card-search-tip" id="cardSearchTip" hidden>
-                <div class="card-search-tip-header">搜索用法</div>
-                <table class="card-search-tip-table">
-                    <tr><td><code>中</code></td><td>含「中」字的卡（简体或繁体）</td></tr>
-                    <tr><td><code>U+4E2D</code></td><td>U+4E2D = 「中」</td></tr>
-                    <tr><td><code>4E2D</code></td><td>同上，省略 U+ 前缀</td></tr>
-                    <tr><td><code>42</code></td><td>第 42 张（1-based）</td></tr>
-                    <tr><td><code>1-50</code></td><td>第 1 到 50 张</td></tr>
-                    <tr><td><code>中 1-50</code></td><td>前 50 张里含「中」字（空格 AND 组合）</td></tr>
-                </table>
-                <div class="card-search-tip-footer">⌨ 按 <kbd>/</kbd> 聚焦搜索框 · <kbd>Esc</kbd> 清空</div>
-            </div>
-        </div>
         <div id="emptyState" class="empty-state-annotate">
             <p>暂无字符数据</p>
             <button class="btn btn-primary" onclick="document.getElementById('importBtn').click()">导入目录</button>

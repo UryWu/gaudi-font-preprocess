@@ -185,7 +185,11 @@ def scale_char(
                1.5 = 1.35×512 = 691，但会被 fill_ratio 上限压回 460。
                注：旧版叫「缩放比例」= 「字 × 1.15」，语义已变。
         target_size: 目标画布尺寸
-        align: 对齐方式
+        align: 对齐方式。
+            'center'（默认）居中；'top' 贴上边；'baseline' 贴下边。
+            另有四个角对齐：'top-left' / 'top-right' / 'bottom-left' / 'bottom-right'，
+            贴边留白同为 2% 画布宽（512 → 10px）。角对齐是给标点用的——
+            「；」要靠左下、「“」靠右上、「”」靠左上，居中反而不符合字库排版。
         background: 背景方式
         fill_ratio: 字符填满画布的比例（默认 0.9 = 460/512）
         max_width_ratio: 超宽字保护的宽度上限（默认 0.95）
@@ -246,15 +250,26 @@ def scale_char(
         canvas = np.zeros((target_size, target_size), dtype=np.uint8)
         is_rgba = False
 
-    # 计算放置位置（居中）
-    left_padding = (target_size - new_w) // 2
-    top_padding = (target_size - new_h) // 2
+    # 计算放置位置
+    # pad = 贴边时的最小留白，沿用 top / baseline 一直使用的 2% 画布宽（512 → 10px）
+    pad = max(5, int(target_size * 0.02))
 
-    # 根据对齐方式调整
-    if align == 'top':
-        top_padding = max(5, int(target_size * 0.02))
-    elif align == 'baseline':
-        top_padding = target_size - new_h - max(5, int(target_size * 0.02))
+    # 水平：默认居中；'*-left' / '*-right' 系列贴左右边
+    # （标点如「；」要靠左下角、「“」靠右上角，居中反而不对）
+    if align.endswith('-left'):
+        left_padding = pad
+    elif align.endswith('-right'):
+        left_padding = target_size - new_w - pad
+    else:
+        left_padding = (target_size - new_w) // 2
+
+    # 垂直：默认居中；'top' / 'top-*' 贴上边，'baseline' / 'bottom-*' 贴下边
+    if align == 'top' or align.startswith('top-'):
+        top_padding = pad
+    elif align == 'baseline' or align.startswith('bottom'):
+        top_padding = target_size - new_h - pad
+    else:
+        top_padding = (target_size - new_h) // 2
 
     # 确保不越界
     left_padding = max(0, left_padding)

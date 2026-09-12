@@ -25,6 +25,8 @@ const elements = {
     mixedInputGroup: document.getElementById('mixedInputGroup'),
     simplifiedInputGroup: document.getElementById('simplifiedInputGroup'),
     traditionalInputGroup: document.getElementById('traditionalInputGroup'),
+    inputSection: document.getElementById('inputSection'),
+    inputToggleBtn: document.getElementById('inputToggleBtn'),
     importBtn: document.getElementById('importBtn'),
     exportBtn: document.getElementById('exportBtn'),
     openDirBtn: document.getElementById('openDirBtn'),
@@ -96,6 +98,16 @@ function setupEventListeners() {
     elements.exportBtn.addEventListener('click', exportImages);
     elements.openDirBtn.addEventListener('click', openOutputDirectory);
     if (elements.cleanupBtn) elements.cleanupBtn.addEventListener('click', cleanupIntermediate);
+
+    // 标注输入框显示开关：切换输入区（.input-section）的展开/收起。
+    // 收起态由 CSS 类 .collapsed 控制（样式写在模板的 <style> 里），
+    // 按钮自身的 .active 表示「输入区当前可见」，与 .mode-btn.active 的表意一致。
+    if (elements.inputToggleBtn && elements.inputSection) {
+        elements.inputToggleBtn.addEventListener('click', () => {
+            const collapsed = elements.inputSection.classList.toggle('collapsed');
+            elements.inputToggleBtn.classList.toggle('active', !collapsed);
+        });
+    }
 
     // 标注按钮
     elements.annotateBtn.addEventListener('click', startAnnotate);

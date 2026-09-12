@@ -57,6 +57,13 @@
 .btn-nav { background-color: #9A9A9A; color: white; }
 .btn-nav:hover:not(:disabled) { background-color: #8B8B8B; }
 
+/* 「标注输入框显示开关」的按下态：表示上方输入区当前是展开的
+   （与 .mode-btn.active 一样，用颜色表达开关状态） */
+#inputToggleBtn.active {
+    background-color: #7A7A7A;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
+}
+
 /* 繁简切换 */
 .mode-toggle {
     display: flex;
@@ -88,6 +95,12 @@
     padding: 15px 20px;
     background-color: #fff;
     border-bottom: 1px solid #e0e0e0;
+}
+
+/* 收起态：由工具栏的「标注输入框显示开关」切换（见 annotate.js 的 setupEventListeners）。
+   默认不收起，页面初始状态与改动前一致 */
+.input-section.collapsed {
+    display: none;
 }
 
 .input-group {
@@ -924,16 +937,32 @@ kbd {
             切割布局
         </button>
 
+        <!-- 操作按钮：原先单独占一行（.action-buttons），并入工具栏让页面更紧凑。
+             基础类从 .action-btn 换成 .toolbar-btn（内边距/字号更小），
+             配色类（btn-annotate / btn-ocr / ...）保持原样不变 -->
+        <button id="annotateBtn" class="toolbar-btn btn-annotate" disabled>开始标注</button>
+        <button id="ocrAnnotateBtn" class="toolbar-btn btn-ocr" disabled title="RapidOCR 自动识别并填入空字段">OCR 自动标注</button>
+        <button id="ocrFilterBtn" class="toolbar-btn ocr-filter-btn" style="display: none;" title="只显示 OCR 自动填入的卡片（待复查）">
+            🔍 只看待复查 (<span id="ocrFilterCount">0</span>)
+        </button>
+        <button id="saveAnnotBtn" class="toolbar-btn btn-save-annot" disabled title="把当前所有卡的人工标注写入 ocr_annotations.json（OCR 自动填的不需要重复保存）">💾 保存标注</button>
+        <button id="clearBtn" class="toolbar-btn btn-clear">清空</button>
+
         <!-- 繁简切换 -->
         <div class="mode-toggle">
             <button id="mixedMode" class="mode-btn active">繁简混合</button>
             <button id="simplifiedMode" class="mode-btn">以简为主</button>
             <button id="traditionalMode" class="mode-btn">以繁为主</button>
         </div>
+
+        <!-- 标注输入框显示开关：切换上方「繁简输入区域」的展开/收起。
+             默认展开（按钮呈按下态），逻辑见 static/js/annotate.js 的 setupEventListeners -->
+        <button id="inputToggleBtn" class="toolbar-btn btn-nav active"
+                title="展开 / 收起上方的标注输入框（繁简混合 / 简体 / 繁体三个输入区）">标注输入框显示开关</button>
     </div>
 
-    <!-- 繁简输入区域 -->
-    <div class="input-section">
+    <!-- 繁简输入区域：默认展开，可用工具栏的「标注输入框显示开关」收起 -->
+    <div class="input-section" id="inputSection">
         <div class="input-group" id="mixedInputGroup">
             <label>繁简混合（输入的文字不做转换，直接标注）</label>
             <textarea id="mixedInput" placeholder="输入繁简混合文字..."></textarea>
@@ -948,15 +977,9 @@ kbd {
         </div>
     </div>
 
-    <!-- 操作按钮 -->
+    <!-- 操作按钮已并入工具栏；这里只剩 OCR 阈值/进度 与 字符计数这两项状态信息
+         （它们不是按钮，故按原样保留在原位置） -->
     <div class="action-buttons">
-        <button id="annotateBtn" class="action-btn btn-annotate" disabled>开始标注</button>
-        <button id="ocrAnnotateBtn" class="action-btn btn-ocr" disabled title="EasyOCR 自动识别 + 填入空字段">OCR 自动标注</button>
-        <button id="ocrFilterBtn" class="action-btn ocr-filter-btn" style="display: none;" title="只显示 OCR 自动填入的卡片（待复查）">
-            🔍 只看待复查 (<span id="ocrFilterCount">0</span>)
-        </button>
-        <button id="saveAnnotBtn" class="action-btn btn-save-annot" disabled title="把当前所有卡的人工标注写入 ocr_annotations.json（OCR 自动填的不需要重复保存）">💾 保存标注</button>
-        <button id="clearBtn" class="action-btn btn-clear">清空</button>
         <div class="ocr-config" id="ocrConfig" style="display: none;">
             <label title="仅填入置信度 ≥ 此值的识别结果（书法 OCR 准确率低，建议 0.5+）">
                 阈值:
@@ -1069,5 +1092,5 @@ kbd {
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=30"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=31"></script>
 {% endblock %}

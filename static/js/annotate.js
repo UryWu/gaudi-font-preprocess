@@ -1671,13 +1671,22 @@ function isCharMatchSearch(char, idx) {
 }
 
 // 更新搜索计数显示
+//
+// 只在「正在过滤」时显示，不搜索时整块隐藏（display:none 而不是留空）：
+//   ① 不搜索时那一栏显示的是「N 张」= 卡片总数，而**同一行的 .char-count-info
+//      已经写着「卡片数: N」**，两处重复且相隔才 300px；
+//   ② 省下的宽度（50px min-width + 8px gap）留给同栏的输入框 —— 工具栏里
+//      搜索栏宽被 max-width 封死，隐藏后输入框从 133px 涨到 191px，
+//      占位符「字符 / U+4E2D / 1-50」才完整显示得下（不会撑宽搜索栏本身，
+//      因为撑宽被 max-width 挡住了，所以不会引起工具栏重新换行）。
 function updateSearchCount() {
     if (!elements.cardSearchCount) return;
     const total = state.characters.length;
     if (!searchState.filterActive) {
-        elements.cardSearchCount.textContent = `${total} 张`;
+        elements.cardSearchCount.style.display = 'none';
         return;
     }
+    elements.cardSearchCount.style.display = '';
     const visible = state.characters.filter((c, i) => isCharMatchSearch(c, i)).length;
     elements.cardSearchCount.textContent = `${visible}/${total}`;
 }

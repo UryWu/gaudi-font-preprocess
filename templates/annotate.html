@@ -523,6 +523,13 @@
 
 .card-search-bar input {
     flex: 1;
+    /* min-width:0 是**必需**的，不是可有可无的保险：
+       表单控件的 min-width 默认是 auto，会解析成「固有宽度」——input 没写 size
+       就按默认 size=20 算，约 203px。于是搜索栏的内容根不低于 350px，
+       而工具栏里栏宽被 max-width 压到 280px → 右侧的计数「N 张」和 ✕ 溢出框外
+       约 70px，直接压在隔壁的 .char-count-info（字符数/卡片数）上。
+       改成 0（= 允许收缩到内容以下）后内容就老实呆在框里了。 */
+    min-width: 0;
     padding: 6px 10px;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -969,7 +976,10 @@ kbd {
             <span class="card-search-icon">🔍</span>
             <input type="text" id="cardSearchInput" placeholder="字符 / U+4E2D / 1-50" autocomplete="off">
             <button class="card-search-help" id="cardSearchHelp" title="查看搜索用法">?</button>
-            <span class="card-search-count" id="cardSearchCount">0/0</span>
+            <!-- 初始 display:none 与「不搜索时隐藏」的规则一致（见 annotate.js 的
+                 updateSearchCount）——该函数只在用户输入时才被调用，
+                 不写死初始态的话页面刚加载会先露出一个无意义的「0/0」 -->
+            <span class="card-search-count" id="cardSearchCount" style="display: none;"></span>
             <button class="card-search-clear" id="cardSearchClear" title="清空搜索 (Esc)">✕</button>
             <!-- 用法提示气泡（点击 ? 弹出 / 外部点击关闭）：绝对定位锚在 .card-search-bar 上 -->
             <div class="card-search-tip" id="cardSearchTip" hidden>
@@ -1106,5 +1116,5 @@ kbd {
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=31"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=32"></script>
 {% endblock %}

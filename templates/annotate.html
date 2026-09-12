@@ -747,6 +747,126 @@ kbd {
     text-align: center;
     line-height: 1.2;
 }
+
+/* 放缩 modal（右键卡片 → 放缩）：沿用上面快捷键帮助弹窗的浮层范式，
+   只是内容更宽，好放下画布 */
+.scale-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.scale-modal[hidden] {
+    display: none;
+}
+
+.scale-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.scale-modal-content {
+    position: relative;
+    background: #fff;
+    border-radius: 8px;
+    width: 700px;
+    max-width: 94%;
+    max-height: 92vh;
+    overflow: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.scale-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #f8f8f8;
+    border-radius: 8px 8px 0 0;
+}
+
+.scale-modal-header h3 {
+    margin: 0;
+    font-size: 15px;
+    color: #333;
+}
+
+/* 标题里带一个文件名，方便确认正在改哪一张 */
+.scale-modal-file {
+    font-size: 12px;
+    color: #888;
+    font-weight: normal;
+    margin-left: 6px;
+}
+
+.scale-modal-close {
+    background: transparent;
+    border: none;
+    font-size: 16px;
+    color: #888;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+
+.scale-modal-close:hover {
+    background: #e0e0e0;
+    color: #c0392b;
+}
+
+.scale-modal-body {
+    padding: 14px 20px;
+}
+
+.scale-hint {
+    margin: 0 0 10px 0;
+    font-size: 12px;
+    color: #888;
+    line-height: 1.5;
+}
+
+/* 画布外套一层黑底，和字图的黑底连成一片，越界区域看得出是「会被裁掉」的部分 */
+.scale-canvas-wrap {
+    background: #000;
+    border-radius: 6px;
+    padding: 6px;
+    display: flex;
+    justify-content: center;
+}
+
+#scaleCanvas {
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.scale-modal-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 10px;
+}
+
+/* 画布左下角那行实时数值（矩形坐标与尺寸） */
+.scale-info {
+    font-size: 12px;
+    color: #666;
+    font-variant-numeric: tabular-nums;
+}
+
+.scale-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid #eee;
+}
 </style>
 {% endblock %}
 
@@ -910,10 +1030,44 @@ kbd {
             </div>
         </div>
     </div>
+
+    <!-- 放缩 modal：右键卡片选「放缩」弹出。
+         画布上八个手柄拖动即可缩放字形，框内按住可整体平移；确定后覆写 scaled_NNNN.png。
+         逻辑见 static/js/annotate.js 的 openScaleModal / scaleDraw / scaleMouseDown -->
+    <div class="scale-modal" id="scaleModal" hidden>
+        <div class="scale-modal-backdrop" data-scale-close></div>
+        <div class="scale-modal-content">
+            <div class="scale-modal-header">
+                <h3>放缩 <span class="scale-modal-file" id="scaleFileName"></span></h3>
+                <button class="scale-modal-close" id="scaleModalClose" title="关闭 (Esc)">✕</button>
+            </div>
+            <div class="scale-modal-body">
+                <p class="scale-hint">
+                    拖动八个手柄缩放字形，按住框内可整体平移。虚线方框是 512 画布边界，
+                    超出它的部分保存后会被裁掉；勾选「按比例」时字形不会被拉变形。
+                </p>
+                <div class="scale-canvas-wrap">
+                    <canvas id="scaleCanvas" width="640" height="640"></canvas>
+                </div>
+                <div class="scale-modal-controls">
+                    <label class="checkbox-label" title="勾选后拖动手柄会保持字形原有宽高比，不会变形">
+                        <input type="checkbox" id="scaleAspectLock" checked>
+                        <span>按比例</span>
+                    </label>
+                    <span class="scale-info" id="scaleInfo"></span>
+                </div>
+            </div>
+            <div class="scale-modal-footer">
+                <button class="btn btn-secondary" id="scaleResetBtn">重置</button>
+                <button class="btn btn-secondary" data-scale-close>取消</button>
+                <button class="btn btn-primary" id="scaleOkBtn">确定</button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=6"></script>
-<script src="{{ url_for('static', filename='js/annotate.js') }}?v=29"></script>
+<script src="{{ url_for('static', filename='js/annotate.js') }}?v=30"></script>
 {% endblock %}

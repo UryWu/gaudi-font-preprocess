@@ -864,6 +864,7 @@ function showCharContextMenu(x, y, char, index) {
     menu.innerHTML = `
         <div class="ctx-item danger" data-action="delete">🗑 删除此字符</div>
         <div class="ctx-item" data-action="open-folder">📁 打开图片位置</div>
+        <div class="ctx-item" data-action="scale">⤢ 放缩</div>
     `;
     // 定位：用 clientX/Y + position:fixed，菜单跟随光标
     menu.style.left = x + 'px';
@@ -879,13 +880,15 @@ function showCharContextMenu(x, y, char, index) {
         menu.style.top = (y - rect.height) + 'px';
     }
 
-    // 点击菜单项：分发到删除/打开
+    // 点击菜单项：分发到删除/打开/放缩
     // 兼容两种数据：原始切割（filename）vs 缩放后（processed_filename）
     menu.addEventListener('click', async (e) => {
         const action = e.target.dataset.action;
         hideCharContextMenu();
         if (action === 'delete') {
             deleteCharacter(char, index);
+        } else if (action === 'scale') {
+            openScaleModal(char, index);
         } else if (action === 'open-folder') {
             const filename = char.processed_filename || char.filename;
             if (!filename) {
@@ -1857,4 +1860,491 @@ function showShortcutHelp() {
 }
 function hideShortcutHelp() {
     if (elements.shortcutHelpModal) elements.shortcutHelpModal.hidden = true;
+}
+
+// ============== 单张字符放缩（右键卡片 → 放缩） ==============
+//
+// 交互：弹窗画布上用八个手柄拖动缩放字形（手柄框住的是**字形墨迹范围**，不是整张 512 图），
+// 按住框内可整体平移；勾「按比例」时保持宽高比不变形。确定后调 /api/rescale_char
+// 原地覆写 scaled_NNNN.png（服务端首次操作前会自动备份成 .bak.png）。
+//
+// 坐标约定（关键，别搞混）：
+//   - 画布逻辑尺寸 640×640，512 的字图**居中画在偏移 (64,64)** 处，1:1 不缩放
+//   - scaleState.rect 一律用**图片坐标**（0~512 系，允许越界为负或 >512），与后端接口一致，
+//     省掉来回换算；画布坐标 = 图片坐标 + SCALE_IMG_OFFSET
+// 为什么四周留 64px：把字放大时必须能把手柄拖到 512 格子**外面**，
+// 才看得见「放大后哪一部分会被裁掉」，否则用户根本不知道该拖多远。
+
+const SCALE_CANVAS_SIZE = 640;   // 画布逻辑尺寸（与 <canvas width/height> 一致）
+const SCALE_IMG_SIZE = 512;      // 字图尺寸（scaled_NNNN.png 恒为 512×512）
+const SCALE_IMG_OFFSET = (SCALE_CANVAS_SIZE - SCALE_IMG_SIZE) / 2;  // = 64
+const SCALE_HANDLE_HIT = 10;     // 手柄命中半径（画布像素）
+const SCALE_HANDLE_SIZE = 9;     // 手柄绘制边长
+const SCALE_MIN_DIM = 8;         // 矩形最小边长（与后端 MIN_RESCALE_DIM 保持一致）
+const SCALE_MAX_DIM = 1200;      // 矩形最大边长（后端上限 4096 太离谱，前端自己收紧）
+
+// 弹窗状态。
+// 注意：不能叫 state —— 本文件顶部已声明 const state（角色/会话数据），重名会直接语法报错
+const scaleState = {
+    open: false,
+    index: -1,          // 卡片下标（保存后刷新这张卡的图用）
+    filename: '',       // scaled_NNNN.png —— 写回时的稳定标识
+    img: null,          // 已加载的 <img>
+    rect: null,         // {x, y, w, h} 图片坐标：手柄框住的墨迹范围
+    initialRect: null,  // 打开时的原始墨迹框，「重置」用
+    drag: null,         // 拖拽中间态 {mode:'resize'|'move', dir, startRect, startPt}
+    hoverDir: null,     // 当前悬停的手柄方向（决定光标）
+};
+
+const scaleEls = {
+    modal: document.getElementById('scaleModal'),
+    canvas: document.getElementById('scaleCanvas'),
+    fileName: document.getElementById('scaleFileName'),
+    info: document.getElementById('scaleInfo'),
+    aspectLock: document.getElementById('scaleAspectLock'),
+    resetBtn: document.getElementById('scaleResetBtn'),
+    okBtn: document.getElementById('scaleOkBtn'),
+    closeBtn: document.getElementById('scaleModalClose'),
+};
+if (scaleEls.canvas) {
+    scaleEls.ctx = scaleEls.canvas.getContext('2d');
+}
+
+/**
+ * 八个手柄的候选点（图片坐标 → 画布坐标）。
+ * 与 static/js/layout.js 的绿框手柄同一套枚举方式；那边手柄尺寸要除以 zoomLevel
+ * 保持视觉恒定，这里画布是 1:1 固定尺寸，不需要。
+ * @param {{x:number,y:number,w:number,h:number}} r 矩形（图片坐标）
+ * @returns {Array<{dir:string, cx:number, cy:number}>} 画布坐标下的八个点
+ */
+function scaleHandlePoints(r) {
+    const x = SCALE_IMG_OFFSET + r.x;
+    const y = SCALE_IMG_OFFSET + r.y;
+    const midX = x + r.w / 2;
+    const midY = y + r.h / 2;
+    return [
+        { dir: 'nw', cx: x,           cy: y },
+        { dir: 'n',  cx: midX,        cy: y },
+        { dir: 'ne', cx: x + r.w,     cy: y },
+        { dir: 'e',  cx: x + r.w,     cy: midY },
+        { dir: 'se', cx: x + r.w,     cy: y + r.h },
+        { dir: 's',  cx: midX,        cy: y + r.h },
+        { dir: 'sw', cx: x,           cy: y + r.h },
+        { dir: 'w',  cx: x,           cy: midY },
+    ];
+}
+
+// 手柄方向 → CSS 光标（与 layout.js 同款映射）
+function scaleCursorFor(dir) {
+    if (!dir) return 'crosshair';
+    if (dir === 'n' || dir === 's') return 'ns-resize';
+    if (dir === 'e' || dir === 'w') return 'ew-resize';
+    if (dir === 'ne' || dir === 'sw') return 'nesw-resize';
+    return 'nwse-resize';
+}
+
+// 屏幕坐标 → 画布逻辑坐标。
+// 必须按 canvas.width / rect.width 换算：弹窗变窄时 canvas 会被 CSS 压小
+// （见 static/css/style.css 的 #scaleCanvas 与 .scale-modal-content 的 max-width），
+// 只用 getBoundingClientRect 的偏移会算歪。
+function scaleEventToCanvas(e) {
+    const canvas = scaleEls.canvas;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return { x: 0, y: 0 };
+    return {
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height),
+    };
+}
+
+// 画布坐标 → 图片坐标
+function scaleCanvasToImage(p) {
+    return { x: p.x - SCALE_IMG_OFFSET, y: p.y - SCALE_IMG_OFFSET };
+}
+
+/**
+ * 命中测试：先看八个手柄，再看是否落在框内（用于平移）。
+ * @returns {string|null} 手柄方向（'nw'…'w'）或 'move'（框内）或 null
+ */
+function scaleHitTest(pt) {
+    const r = scaleState.rect;
+    if (!r) return null;
+    for (const h of scaleHandlePoints(r)) {
+        if (Math.abs(pt.x - h.cx) <= SCALE_HANDLE_HIT && Math.abs(pt.y - h.cy) <= SCALE_HANDLE_HIT) {
+            return h.dir;
+        }
+    }
+    // 框内：留给平移
+    const x = SCALE_IMG_OFFSET + r.x;
+    const y = SCALE_IMG_OFFSET + r.y;
+    if (pt.x >= x && pt.x <= x + r.w && pt.y >= y && pt.y <= y + r.h) return 'move';
+    return null;
+}
+
+/**
+ * 把矩形夹紧到合法范围：限制尺寸，并要求它至少与 512 格子相交
+ * （否则用户可以把它拖到画布外，看不见也没法再拖回来）。
+ */
+function scaleClampRect(r) {
+    r.w = Math.max(SCALE_MIN_DIM, Math.min(SCALE_MAX_DIM, r.w));
+    r.h = Math.max(SCALE_MIN_DIM, Math.min(SCALE_MAX_DIM, r.h));
+    const maxX = SCALE_IMG_SIZE - SCALE_MIN_DIM;    // 左边界最远只能到格的右侧再留一点
+    const minX = -r.w + SCALE_MIN_DIM;              // 右边界至少要压住格的左侧一点
+    r.x = Math.max(minX, Math.min(maxX, r.x));
+    const maxY = SCALE_IMG_SIZE - SCALE_MIN_DIM;
+    const minY = -r.h + SCALE_MIN_DIM;
+    r.y = Math.max(minY, Math.min(maxY, r.y));
+    return r;
+}
+
+/**
+ * 按拖动的方向算出新矩形。
+ *
+ * 做法：先定「锚点」——没被拖动的那一侧（角手柄是对角，边手柄是相对的那条边，
+ * 另一轴以中线为锚），再按指针位置算新尺寸，最后从锚点反推左上角。
+ * 勾了「按比例」时，只让主方向决定尺寸，另一方向按原始宽高比推出来，保证不变形：
+ *   - 拖左右（含角手柄）→ 以宽为准推高
+ *   - 纯拖上下边 → 以高为准推宽
+ *
+ * @param {{x,y,w,h}} s 拖拽开始时的矩形
+ * @param {string} dir 手柄方向
+ * @param {{x,y}} imgPt 当前指针位置（图片坐标）
+ * @param {boolean} lock 是否锁定宽高比
+ */
+function scaleResizeRect(s, dir, imgPt, lock) {
+    const ratio = s.w / s.h;                 // 锁定用的比例（拖拽开始时确定，中途不变）
+    const right = s.x + s.w;
+    const bottom = s.y + s.h;
+
+    // 1) 锚点
+    const anchorX = dir.includes('w') ? right : (dir.includes('e') ? s.x : s.x + s.w / 2);
+    const anchorY = dir.includes('n') ? bottom : (dir.includes('s') ? s.y : s.y + s.h / 2);
+
+    // 2) 新尺寸
+    let w = s.w;
+    let h = s.h;
+    if (dir.includes('w') || dir.includes('e')) w = Math.abs(imgPt.x - anchorX);
+    if (dir.includes('n') || dir.includes('s')) h = Math.abs(imgPt.y - anchorY);
+    if (lock) {
+        if (dir.includes('w') || dir.includes('e')) {
+            h = w / ratio;      // 拖左右（含四个角手柄）→ 以宽为准推高
+        } else {
+            w = h * ratio;      // 纯拖上下边 → 以高为准推宽
+        }
+    }
+
+    // 3) 尺寸下限，避免出现 0 或负数
+    w = Math.max(SCALE_MIN_DIM, w);
+    h = Math.max(SCALE_MIN_DIM, h);
+
+    // 4) 从锚点反推左上角（角手柄：锚点就是对角那个角；边手柄：另一轴以中线为锚）
+    let x, y;
+    if (dir.includes('w')) x = anchorX - w;
+    else if (dir.includes('e')) x = anchorX;
+    else x = anchorX - w / 2;
+    if (dir.includes('n')) y = anchorY - h;
+    else if (dir.includes('s')) y = anchorY;
+    else y = anchorY - h / 2;
+
+    return scaleClampRect({ x, y, w, h });
+}
+
+/** 重绘弹窗画布：黑底 → 字图 → 512 格子虚线 → 越界提示 → 矩形 → 八个手柄 */
+function scaleDraw() {
+    const ctx = scaleEls.ctx;
+    if (!ctx) return;
+    const S = SCALE_CANVAS_SIZE;
+    const OFF = SCALE_IMG_OFFSET;
+    const IMG = SCALE_IMG_SIZE;
+
+    ctx.clearRect(0, 0, S, S);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, S, S);
+
+    // 字图（只画在格子内，本身就被格子框住）
+    if (scaleState.img) {
+        ctx.drawImage(scaleState.img, OFF, OFF, IMG, IMG);
+    }
+
+    // 512 格子边界：虚线，用户据此判断哪里会被裁
+    ctx.save();
+    ctx.strokeStyle = '#666';
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(OFF + 0.5, OFF + 0.5, IMG - 1, IMG - 1);
+    ctx.restore();
+
+    const r = scaleState.rect;
+    if (!r) return;
+    const rx = OFF + r.x;
+    const ry = OFF + r.y;
+
+    // 越界部分涂红：直接回答「放大后哪里会被裁掉」
+    const ix0 = Math.max(rx, OFF);
+    const iy0 = Math.max(ry, OFF);
+    const ix1 = Math.min(rx + r.w, OFF + IMG);
+    const iy1 = Math.min(ry + r.h, OFF + IMG);
+    ctx.save();
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.28)';
+    if (ix1 <= ix0 || iy1 <= iy0) {
+        ctx.fillRect(rx, ry, r.w, r.h);                 // 整个框都在格子外
+    } else {
+        if (rx < ix0) ctx.fillRect(rx, ry, ix0 - rx, r.h);                    // 左
+        if (rx + r.w > ix1) ctx.fillRect(ix1, ry, rx + r.w - ix1, r.h);       // 右
+        if (ry < iy0) ctx.fillRect(ix0, ry, ix1 - ix0, iy0 - ry);             // 上
+        if (ry + r.h > iy1) ctx.fillRect(ix0, iy1, ix1 - ix0, ry + r.h - iy1); // 下
+    }
+    ctx.restore();
+
+    // 矩形边框（橙色，与 /scale 合并工具同色系）
+    ctx.save();
+    ctx.strokeStyle = '#f39c12';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rx, ry, r.w, r.h);
+
+    // 八个手柄：白底橙边小方块
+    ctx.lineWidth = 1.5;
+    for (const h of scaleHandlePoints(r)) {
+        const hs = SCALE_HANDLE_SIZE;
+        ctx.fillStyle = (scaleState.hoverDir === h.dir) ? '#f39c12' : '#fff';
+        ctx.fillRect(h.cx - hs / 2, h.cy - hs / 2, hs, hs);
+        ctx.strokeStyle = '#f39c12';
+        ctx.strokeRect(h.cx - hs / 2, h.cy - hs / 2, hs, hs);
+    }
+    ctx.restore();
+
+    scaleUpdateInfo();
+}
+
+// 实时数值行（顺带提示会被裁）
+function scaleUpdateInfo() {
+    if (!scaleEls.info || !scaleState.rect) return;
+    const r = scaleState.rect;
+    const cropped = r.x < 0 || r.y < 0 || r.x + r.w > SCALE_IMG_SIZE || r.y + r.h > SCALE_IMG_SIZE;
+    const text = `x ${Math.round(r.x)}　y ${Math.round(r.y)}　宽 ${Math.round(r.w)}　高 ${Math.round(r.h)}`;
+    scaleEls.info.textContent = cropped ? `${text}　⚠ 越界部分会被裁掉` : text;
+    scaleEls.info.style.color = cropped ? '#c0392b' : '#666';
+}
+
+/**
+ * 用离屏 canvas 读像素求字形墨迹包围盒。
+ * 阈值 >127 —— **与后端 /api/rescale_char 完全同口径**（后端也刻意没用会先腐蚀的
+ * detect_char_bbox），所以用户看到的框就是实际裁剪范围，所见即所得。
+ * @returns {{x,y,w,h}|null} 图片坐标下的墨迹框；全黑时返回 null
+ */
+function scaleDetectInkRect(img) {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0);
+    let data;
+    try {
+        data = cx.getImageData(0, 0, c.width, c.height).data;
+    } catch (e) {
+        return null;   // 同源图片不会走到这，兜底防止污染 canvas 抛错
+    }
+    let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
+    for (let y = 0; y < c.height; y++) {
+        const row = y * c.width * 4;
+        for (let x = 0; x < c.width; x++) {
+            // 字图是灰阶黑底白字，取 R 通道当亮度即可
+            if (data[row + x * 4] > 127) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (maxX < 0) return null;
+    return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+/** 打开放缩弹窗（右键菜单「放缩」调用） */
+function openScaleModal(char, index) {
+    const filename = char.processed_filename || char.filename;
+    if (!filename) {
+        showToast('放缩失败：字符无文件名');
+        return;
+    }
+    if (!scaleEls.modal || !scaleEls.canvas) return;
+
+    scaleState.open = true;
+    scaleState.index = index;
+    scaleState.filename = filename;
+    scaleState.rect = null;
+    scaleState.drag = null;
+    scaleState.hoverDir = null;
+    if (scaleEls.fileName) scaleEls.fileName.textContent = filename;
+    scaleEls.modal.hidden = false;
+    scaleDraw();   // 先画个黑底，避免图没加载完时闪一片白
+
+    // 加载当前字图。必须带 ?t= —— /output 路由是 immutable 长缓存，
+    // 放缩保存后若不换时间戳，弹窗与卡片都会继续显示旧图（见 createCharCard 的注释）
+    const url = (char.processed_url || `/output/${state.imageHash}/scaled/${filename}`)
+        + '?t=' + Date.now();
+    const img = new Image();
+    img.onload = () => {
+        if (!scaleState.open) return;   // 加载期间可能已被关掉
+        scaleState.img = img;
+        const ink = scaleDetectInkRect(img);
+        // 全黑图兜底：给一个居中的默认框，用户仍可自行拖动
+        const rect = ink || {
+            x: Math.round(SCALE_IMG_SIZE * 0.1), y: Math.round(SCALE_IMG_SIZE * 0.1),
+            w: Math.round(SCALE_IMG_SIZE * 0.8), h: Math.round(SCALE_IMG_SIZE * 0.8),
+        };
+        scaleState.rect = { ...rect };
+        scaleState.initialRect = { ...rect };
+        scaleDraw();
+    };
+    img.onerror = () => showToast('字图加载失败，无法放缩');
+    img.src = url;
+}
+
+/** 关闭弹窗（取消 / 点遮罩 / Esc / 保存成功后都走这里） */
+function closeScaleModal() {
+    scaleState.open = false;
+    scaleState.drag = null;
+    scaleState.img = null;
+    if (scaleEls.modal) scaleEls.modal.hidden = true;
+}
+
+/** 重置回打开时检测到的墨迹框 */
+function scaleResetRect() {
+    if (!scaleState.initialRect) return;
+    scaleState.rect = { ...scaleState.initialRect };
+    scaleDraw();
+}
+
+// —— 鼠标交互 ——
+function scaleMouseDown(e) {
+    if (!scaleState.rect) return;
+    const pt = scaleEventToCanvas(e);
+    const hit = scaleHitTest(pt);
+    if (!hit) return;
+
+    scaleState.drag = {
+        mode: hit === 'move' ? 'move' : 'resize',
+        dir: hit,
+        startRect: { ...scaleState.rect },
+        startPt: scaleCanvasToImage(pt),
+    };
+    e.preventDefault();
+
+    // 拖动期间的 move/up 挂到 document 上：指针移出画布（拖到格子外面）也能继续拖
+    document.addEventListener('mousemove', scaleMouseMove);
+    document.addEventListener('mouseup', scaleMouseUp);
+}
+
+function scaleMouseMove(e) {
+    const d = scaleState.drag;
+    if (!d) return;
+    const imgPt = scaleCanvasToImage(scaleEventToCanvas(e));
+
+    if (d.mode === 'move') {
+        scaleState.rect = scaleClampRect({
+            x: d.startRect.x + (imgPt.x - d.startPt.x),
+            y: d.startRect.y + (imgPt.y - d.startPt.y),
+            w: d.startRect.w,
+            h: d.startRect.h,
+        });
+    } else {
+        const lock = !!(scaleEls.aspectLock && scaleEls.aspectLock.checked);
+        scaleState.rect = scaleResizeRect(d.startRect, d.dir, imgPt, lock);
+    }
+    scaleDraw();
+}
+
+function scaleMouseUp() {
+    scaleState.drag = null;
+    document.removeEventListener('mousemove', scaleMouseMove);
+    document.removeEventListener('mouseup', scaleMouseUp);
+}
+
+// 悬停：只换光标与手柄高亮，不改变数据
+function scaleHover(e) {
+    if (scaleState.drag || !scaleState.rect) return;
+    const pt = scaleEventToCanvas(e);
+    const hit = scaleHitTest(pt);
+    const dir = (hit === 'move') ? null : hit;
+    const cursor = (hit === 'move') ? 'move' : scaleCursorFor(hit);
+    if (scaleEls.canvas.style.cursor !== cursor) scaleEls.canvas.style.cursor = cursor;
+    if (scaleState.hoverDir !== dir) {
+        scaleState.hoverDir = dir;
+        scaleDraw();
+    }
+}
+
+/** 保存：调 /api/rescale_char 原地覆写，成功后刷新卡片图 */
+async function scaleSubmit() {
+    const r = scaleState.rect;
+    if (!r) return;
+    if (r.w < SCALE_MIN_DIM || r.h < SCALE_MIN_DIM) {
+        showToast(`矩形太小（最小 ${SCALE_MIN_DIM}px）`);
+        return;
+    }
+
+    showLoading('正在保存放缩...');
+    try {
+        const resp = await fetch(`/api/rescale_char/${state.imageHash}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                processed_filename: scaleState.filename,
+                x: r.x, y: r.y, w: r.w, h: r.h,
+            }),
+        });
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.error || '保存失败');
+
+        scaleRefreshCardImage(scaleState.index);
+        showToast(data.backup
+            ? `已保存放缩（原图备份为 ${data.backup}）`
+            : '已保存放缩');
+        closeScaleModal();
+    } catch (err) {
+        showToast('保存失败: ' + err.message);
+    }
+    hideLoading();
+}
+
+/**
+ * 放缩保存后刷新该卡片的图片。
+ * 只换 URL 上的 ?t= 时间戳——路径不变，绕开 /output 的 immutable 长缓存。
+ */
+function scaleRefreshCardImage(index) {
+    const card = document.querySelector(`.char-card[data-index="${index}"]`);
+    if (!card) return;
+    const img = card.querySelector('img');
+    if (!img) return;
+    img.src = img.src.split('?')[0] + '?t=' + Date.now();
+}
+
+// 接线（元素在 annotate.html 里，脚本在页面末尾加载，DOM 已就绪）
+if (scaleEls.modal) {
+    scaleEls.canvas.addEventListener('mousedown', scaleMouseDown);
+    scaleEls.canvas.addEventListener('mousemove', scaleHover);
+    scaleEls.canvas.addEventListener('mouseleave', () => {
+        if (!scaleState.drag) {
+            scaleEls.canvas.style.cursor = 'crosshair';
+            if (scaleState.hoverDir !== null) { scaleState.hoverDir = null; scaleDraw(); }
+        }
+    });
+    if (scaleEls.resetBtn) scaleEls.resetBtn.addEventListener('click', scaleResetRect);
+    if (scaleEls.okBtn) scaleEls.okBtn.addEventListener('click', scaleSubmit);
+    if (scaleEls.closeBtn) scaleEls.closeBtn.addEventListener('click', closeScaleModal);
+    // 点遮罩关闭（内容区内的点击不冒泡到这里，因为内容不是遮罩的子元素）
+    document.querySelectorAll('#scaleModal [data-scale-close]').forEach(el => {
+        el.addEventListener('click', closeScaleModal);
+    });
+
+    // Esc 关闭。用 capture 且只在自己开着时拦截，避免顺带触发页面其它 Esc 行为
+    // （annotate.js 里还有搜索框清空等 Esc 逻辑）
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && scaleState.open) {
+            e.stopPropagation();
+            closeScaleModal();
+        }
+    }, true);
 }

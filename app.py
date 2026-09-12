@@ -1242,6 +1242,125 @@ def process_scale():
         return jsonify({'error': str(e)}), 500
 
 
+# ==================== 单张字符放缩（/annotate 右键「放缩」） ====================
+# 与上面 /api/process_scale 的整批「按高度归一」不同：这里只动一张图，且不做归一，
+# 纯几何重贴 —— 裁出字形墨迹 → 缩放到用户拖出的矩形尺寸 → 贴到画布的目标位置。
+# 为什么必须单开接口而不能复用 process_scale：后者的输出名是 f"scaled_{i:04d}.png"，
+# i 是传入数组的枚举下标，只传一张就会写成 scaled_0000.png 覆盖别人的图。
+
+# 目标矩形最小边长：再小 cv2.resize 也没意义
+MIN_RESCALE_DIM = 8
+# 目标矩形最大边长：防止误传超大值吃爆内存（512 画布实际用不到）
+MAX_RESCALE_DIM = 4096
+
+
+@app.route('/api/rescale_char/<image_hash>', methods=['POST'])
+def rescale_char(image_hash):
+    """单张字符放缩：按目标矩形重贴字形，原地覆写 scaled 图（首次操作前自动备份）
+
+    请求体: {
+        processed_filename: 'scaled_0324.png',   # scaled/ 下的文件名（卡的稳定标识）
+        x, y, w, h:          目标矩形（512 画布坐标系；允许为负或超出画布，超出部分裁掉）
+    }
+
+    处理流程:
+        1) 读 scaled/<processed_filename>
+        2) 求字形墨迹包围盒并裁剪 —— 这里**不用** scale_processor.detect_char_bbox()，
+           因为它会先做 3×3 腐蚀（那是自动流水线用来去边缘噪点的），
+           手动放缩若跟着腐蚀会把贴边笔画裁掉 1~2px。改用纯 >127 阈值求包围盒，
+           与前端口径一致 → 用户在画布上看到的框就是实际裁剪范围（所见即所得）。
+        3) 把裁出的字形缩放到 w×h（缩小用 INTER_AREA 更干净，放大用 INTER_LINEAR）
+        4) 贴到画布 (x, y)：与画布求交后写入，越界部分自然裁掉
+        5) 首次操作前备份为 scaled_NNNN.bak.png —— 已存在则**不覆盖**，
+           始终保留最原始那一版，便于一键回到「缩放校正」的产出
+        6) 原地覆写 scaled/<processed_filename>。文件名不变，所以
+           ocr_annotations.json（按文件名索引）、cutting.json、导出全链路都不受影响
+           —— 它们都不读图片尺寸。
+
+    返回: {success, box: {x,y,w,h} 实际生效的墨迹框, backup: 备份文件名或 null}
+    """
+    import shutil
+    import traceback
+
+    data = request.get_json() or {}
+    processed_filename = (data.get('processed_filename') or '').strip()
+
+    # 防路径穿越：只接受纯文件名
+    if (not processed_filename or '..' in processed_filename
+            or '/' in processed_filename or '\\' in processed_filename):
+        return jsonify({'success': False, 'error': '非法文件名'}), 400
+
+    try:
+        x = int(round(float(data.get('x', 0))))
+        y = int(round(float(data.get('y', 0))))
+        w = int(round(float(data.get('w', 0))))
+        h = int(round(float(data.get('h', 0))))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': '矩形参数非法'}), 400
+
+    if w < MIN_RESCALE_DIM or h < MIN_RESCALE_DIM:
+        return jsonify({'success': False,
+                        'error': f'矩形太小（最小 {MIN_RESCALE_DIM}px）'}), 400
+    if w > MAX_RESCALE_DIM or h > MAX_RESCALE_DIM:
+        return jsonify({'success': False,
+                        'error': f'矩形太大（最大 {MAX_RESCALE_DIM}px）'}), 400
+
+    scaled_dir = os.path.join(OUTPUT_FOLDER, image_hash, 'scaled')
+    src_path = os.path.join(scaled_dir, processed_filename)
+    if not os.path.exists(src_path):
+        return jsonify({'success': False, 'error': '图片不存在'}), 404
+
+    try:
+        img = load_image(src_path)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+
+        # 1) 纯阈值求墨迹包围盒（不腐蚀，理由见 docstring）
+        ys, xs = np.nonzero((gray > 127).astype(np.uint8))
+        if len(xs) == 0:
+            return jsonify({'success': False, 'error': '未检测到字形'}), 400
+        bx, by = int(xs.min()), int(ys.min())
+        bw, bh = int(xs.max()) - bx + 1, int(ys.max()) - by + 1
+        ink = gray[by:by + bh, bx:bx + bw]
+
+        # 2) 缩放到目标尺寸
+        interp = cv2.INTER_AREA if (w < bw or h < bh) else cv2.INTER_LINEAR
+        resized = cv2.resize(ink, (w, h), interpolation=interp)
+
+        # 3) 贴到画布：目标矩形与画布求交（同时处理负坐标与越界两种情况）
+        ih, iw = gray.shape[:2]
+        canvas = np.zeros((ih, iw), dtype=np.uint8)
+        dx, dy = max(0, x), max(0, y)          # 画布上的落点
+        sx, sy = max(0, -x), max(0, -y)        # 源图上要跳过的部分（矩形越出左上角时）
+        cw = min(w - sx, iw - dx)              # 实际能写入的宽
+        ch = min(h - sy, ih - dy)
+        if cw <= 0 or ch <= 0:
+            return jsonify({'success': False, 'error': '矩形完全在画布外'}), 400
+        canvas[dy:dy + ch, dx:dx + cw] = resized[sy:sy + ch, sx:sx + cw]
+
+        # 4) 首次操作前备份（已存在则不覆盖，保留最原始版本）
+        stem, ext = os.path.splitext(processed_filename)
+        backup_path = os.path.join(scaled_dir, f"{stem}.bak{ext}")
+        backup_name = None
+        if not os.path.exists(backup_path):
+            shutil.copy2(src_path, backup_path)
+            backup_name = os.path.basename(backup_path)
+
+        # 5) 原地覆写（文件名不变）
+        save_image(canvas, src_path)
+
+        print(f"[rescale_char] {image_hash}/{processed_filename}: "
+              f"目标矩形=({x},{y},{w},{h}) 原墨迹=({bx},{by},{bw},{bh}) 备份={backup_name}")
+        return jsonify({
+            'success': True,
+            'box': {'x': dx, 'y': dy, 'w': cw, 'h': ch},
+            'backup': backup_name,
+        })
+    except Exception as e:
+        print(f"rescale_char 错误: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/save_scaled', methods=['POST'])
 def save_scaled():
     """保存缩放校正结果

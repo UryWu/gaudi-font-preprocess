@@ -415,6 +415,13 @@ def api_list_sessions():
     每个 session 还包含 `exports` 字段——该 session 历次「导出训练包」产物。
     导出来源是磁盘扫描（不是 cutting.json 记录）——用户手动删 export 目录后
     API 自动不再列出，符合「手动删 = 不需要了」语义。详见 _scan_session_exports。
+
+    **两个图片计数不能混用**（前端按页面各取所需，见 templates/base.html 的
+    会话选择器）：
+      - `output_count` = cutting_output/char_*.png 张数 → /scale、/adjust 的数据源
+      - `scaled_count` = scaled/scaled_*.png 张数     → /annotate 的**首选**数据源
+    两者会独立缺失（清理过程图、在 /adjust 删切图……），所以不能只看其中一个
+    就断言整个批次「缺数据」。
     """
     sessions = list_sessions(DATA_FOLDER)
     result = []
@@ -425,12 +432,24 @@ def api_list_sessions():
         chars = session_data.get('characters', [])
         # 是否有有效坐标（x>0 或 y>0 的字符）
         has_coords = any(c.get('x', 0) > 0 or c.get('y', 0) > 0 for c in chars)
-        # 是否已有 cutting_output 目录
+        # 是否已有 cutting_output 目录（原始切图 char_*.png）——/scale、/adjust 的数据源
         out_dir = char_dir(h)
         out_files = 0
         if os.path.isdir(out_dir):
             out_files = sum(1 for f in os.listdir(out_dir)
                             if f.startswith('char_') and f.endswith('.png'))
+        # 缩放校正后的图（scaled_*.png）——/annotate 的**首选**数据源
+        # （见 static/js/annotate.js 的 loadCharacters：先问 get_scaled_results，
+        #  返回空才回退 get_cut_results，所以对 /annotate 来说两者有其一即可用）
+        # 单独统计是因为这两个目录的存亡是独立的：用户点过「清理过程图」、
+        # 或在 /adjust 里删过切图，都可能让 cutting_output 空了而 scaled/ 还在——
+        # 此时会话在 /scale、/adjust 上确实不可用，但在 /annotate 上完全正常，
+        # 前端的「可用/缺数据」必须按页面各自的数据源判断，不能只看 output_count
+        scaled_dir = os.path.join(DATA_FOLDER, h, 'scaled')
+        scaled_files = 0
+        if os.path.isdir(scaled_dir):
+            scaled_files = sum(1 for f in os.listdir(scaled_dir)
+                               if f.startswith('scaled_') and f.endswith('.png'))
         # 原图是否还在
         upload_path = os.path.join(UPLOAD_FOLDER, f"{h}.png")
         has_upload = os.path.exists(upload_path)
@@ -439,6 +458,7 @@ def api_list_sessions():
             'char_count': len(chars),
             'has_coords': has_coords,
             'output_count': out_files,
+            'scaled_count': scaled_files,
             'has_upload': has_upload,
             'exports': _scan_session_exports(h),
         })

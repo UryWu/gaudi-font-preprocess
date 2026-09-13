@@ -144,6 +144,21 @@
             }
         };
 
+        // 「当前页能不能用这个批次」——**各页数据源不同，必须分开判断**：
+        //   /annotate：先读 scaled/（缩放校正结果），返回空才回退 cutting_output/
+        //              → 两者有其一就可用
+        //   /scale、/adjust、/layout：直接读 cutting_output/ 的原始切图 → 必须有它
+        // 只看 output_count 会把「scaled 还在、切图被清了」的批次误判成缺数据：
+        // 这种批次在 /annotate 上完全正常，却被打上「缺数据」并禁点。
+        const isAnnotatePage = location.pathname.indexOf('/annotate') === 0;
+        const canUseHere = (s) => isAnnotatePage
+            ? (s.scaled_count > 0 || s.output_count > 0)
+            : s.output_count > 0;
+        // 不可用时的原因说明（让人知道是哪个目录缺，而不是笼统的「缺数据」）
+        const missReason = isAnnotatePage
+            ? '缩放结果与原始切图都没有，无法加载'
+            : '原始切图（cutting_output）缺失，本页无法加载；到「标注出图」页仍可打开';
+
         // 下拉列表
         const renderDropdown = () => {
             if (sessions.length === 0) {
@@ -154,7 +169,7 @@
             const cur = getCurrent();
             list.innerHTML = sessions.map(s => {
                 const isCurrent = s.hash === cur;
-                const isAvailable = s.output_count > 0;
+                const isAvailable = canUseHere(s);
                 const short = s.hash.slice(0, 8);
                 const status = isAvailable
                     ? '<span class="sp-status ok">可用</span>'
@@ -162,7 +177,7 @@
                 // 不可用的不让点（disabled）；点击同一条目不刷新
                 const cls = `sp-item ${isCurrent ? 'current' : ''} ${!isAvailable ? 'disabled' : ''}`;
                 return `
-                    <div class="${cls}" data-hash="${s.hash}" title="${isAvailable ? '点击切换到此批次' : 'output 数据缺失，无法加载'}">
+                    <div class="${cls}" data-hash="${s.hash}" title="${isAvailable ? '点击切换到此批次' : missReason}">
                         <span class="sp-hash">${short}${isCurrent ? ' ✓' : ''}</span>
                         <span class="sp-count">${s.char_count} 字</span>
                         ${status}
@@ -185,8 +200,8 @@
                 });
             });
 
-            // 底部统计：N 个批次，可用 M 个
-            const avail = sessions.filter(s => s.output_count > 0).length;
+            // 底部统计：N 个批次，可用 M 个（同样按当前页的数据源口径统计）
+            const avail = sessions.filter(canUseHere).length;
             footer.textContent = `共 ${sessions.length} 个批次，可用 ${avail} 个`;
         };
 

@@ -448,8 +448,12 @@ def api_list_sessions():
         scaled_dir = os.path.join(DATA_FOLDER, h, 'scaled')
         scaled_files = 0
         if os.path.isdir(scaled_dir):
+            # 排除 .bak.png：/api/rescale_char（以及手工重处理）会留
+            # scaled_NNNN.bak.png 作退路，它同样满足 startswith('scaled_')
+            # 且 endswith('.png')，不排掉就会把备份也数成一个字符
             scaled_files = sum(1 for f in os.listdir(scaled_dir)
-                               if f.startswith('scaled_') and f.endswith('.png'))
+                               if f.startswith('scaled_') and f.endswith('.png')
+                               and '.bak.' not in f)
         # 原图是否还在
         upload_path = os.path.join(UPLOAD_FOLDER, f"{h}.png")
         has_upload = os.path.exists(upload_path)

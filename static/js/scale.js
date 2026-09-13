@@ -123,25 +123,22 @@ async function loadCharacters() {
         showPreviewGrid();
         updateUI();
 
-        // 先把上次保存的参数还原到控件上，再自动处理。
-        // 否则自动处理会用「页面默认值」去覆盖磁盘上的 scaled 图 —— 例如保存时用的是
-        // 标点角对齐（bottom-left），一进页面就被默认的 center 重写掉。
+        // 把上次保存的参数还原到控件上（只影响控件显示，不触发任何写盘）。
+        // 不还原的话，用户点「处理」时用的会是页面默认值（居中），而不是他上次的设置。
         const restored = data.scale_params ? applyScaleParams(data.scale_params) : true;
-
-        if (restored) {
-            // 自动处理（v2 算法）。注意 process_scale 现在会顺带落盘元数据，
-            // 所以这一步同时把「已缩放」写进会话，/annotate 才会用 scaled 图。
-            await autoProcess();
-        } else {
-            // 保存的参数里有本页没有对应控件的（如角对齐），自动处理必然用错参数覆盖，
-            // 于是**不自动跑**，交给用户显式点「处理」再决定。
-            // 但仍要渲染预览，否则网格是空的（autoProcess 正常路径里会渲染）
-            renderOriginalPreview();
-            console.warn('保存的缩放参数在本页无法完整还原，已跳过自动处理以避免覆盖',
-                data.scale_params);
+        if (!restored) {
+            console.warn('保存的缩放参数在本页无法完整还原（如角对齐）', data.scale_params);
             showToast(`该批次保存时用的是「${data.scale_params.align}」对齐，本页没有对应选项，` +
-                      `已跳过自动处理以免覆盖已有结果；确认要重做请点「处理」`);
+                      `控件只能显示默认值；要按新参数重做请点「处理」`);
         }
+
+        // === 打开页面只做「只读预览」，绝不写盘 ===
+        // 这里以前是无条件 await autoProcess()（POST /api/process_scale），
+        // 而那个接口会**重写整个 scaled/ 目录** —— 于是「打开一次 /scale」就等于
+        // 「用页面参数覆盖一次缩放结果」。2026-09-13 正是这样误覆盖掉了 671 个文件。
+        // 现在改成：有现成的缩放结果就只读预览它们，没有就预览原始切图；
+        // 想按当前参数重新生成，必须显式点「处理」按钮（startProcess）才写盘。
+        await previewExistingScaled();
 
     } catch (error) {
         console.error('加载字符数据失败:', error);
@@ -150,14 +147,49 @@ async function loadCharacters() {
 }
 
 /**
+ * 只读预览磁盘上现有的缩放结果（**不写盘**）。
+ *
+ * 数据源 /api/get_scaled_results：它返回会话里保存的 scaled_characters；若该会话
+ * 从未保存过缩放结果，它会退化成返回 characters（那些只有 image_url、没有
+ * processed_url），所以判定条件是「有没有 processed_url」，不能只看数组长度。
+ *
+ *   有 → 用 scaled 图渲染预览，并把「保存 / 打开目录 / 下一步」置为可用
+ *        （磁盘上确实已经有结果了，isProcessed 名副其实）
+ *   无 → 退化为渲染原始切图，按钮保持禁用（还没处理过，没什么可保存）
+ */
+async function previewExistingScaled() {
+    try {
+        const r = await fetch(`/api/get_scaled_results/${state.imageHash}`);
+        const d = await r.json();
+        const chars = (d.characters || []).filter(c => c.processed_url && !c.is_empty);
+        if (d.success && chars.length > 0) {
+            state.processedCharacters = chars;
+            state.isProcessed = true;
+            renderProcessedPreview(chars);
+            elements.saveBtn.disabled = false;
+            elements.openDirBtn.disabled = false;
+            elements.annotateBtn.disabled = false;
+            return;
+        }
+    } catch (e) {
+        console.warn('读取现有缩放结果失败，退化为预览原始切图:', e);
+    }
+    renderOriginalPreview();
+}
+
+/**
  * 把会话里保存的缩放参数还原到页面控件上。
  *
- * 为什么需要：loadCharacters 会自动调 autoProcess，而它读的是**控件当前值**。
- * 不先还原，页面默认值（居中、0.9 等）就会覆盖掉保存时的设置。
+ * 为什么需要：「处理」（startProcess）读的是**控件当前值**。不先还原，用户点
+ * 「处理」时用的就是页面默认值（居中、100% 等），而不是他上次保存的设置——
+ * 那等于一按就把上次的成果换成另一套参数。
+ *
+ * 注意：本函数**只改控件状态，不触发任何写盘**。
  *
  * @param {object} p 服务端返回的 scale_params（见 app.py 的 _get_scale_params）
- * @returns {boolean} true = 参数已完整还原；false = 有参数在本页找不到对应控件，
- *                    此时**不能**自动处理（否则必然用错参数覆盖，故调用方会跳过）
+ * @returns {boolean} true = 参数已完整还原；false = 有参数在本页找不到对应控件
+ *                    （例如标点角对齐 bottom-left），控件只能显示默认值，
+ *                    调用方会 toast 提醒用户
  */
 function applyScaleParams(p) {
     let ok = true;
@@ -198,52 +230,11 @@ function applyScaleParams(p) {
     return ok;
 }
 
-// 自动处理（页面加载时使用默认参数；v2 = 高度归一）
-async function autoProcess() {
-    if (state.characters.length === 0) {
-        return;
-    }
-
-    const params = getScaleParams();
-    showProgress();
-    elements.progressText.textContent = '正在按高度归一...';
-
-    try {
-        const response = await fetch('/api/process_scale', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                hash: state.imageHash,
-                characters: state.characters,
-                ...params
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            state.processedCharacters = data.characters;
-            state.outputDir = data.output_dir;
-            state.isProcessed = true;
-
-            // 渲染处理后的预览
-            renderProcessedPreview(data.characters);
-
-            // 启用按钮
-            elements.saveBtn.disabled = false;
-            elements.openDirBtn.disabled = false;
-            elements.annotateBtn.disabled = false;
-        } else {
-            renderOriginalPreview();
-            console.error('自动处理失败:', data.error);
-        }
-    } catch (error) {
-        renderOriginalPreview();
-        console.error('自动处理失败:', error);
-    }
-
-    hideProgress();
-}
+// 【已删除】autoProcess()：原先在页面加载时自动 POST /api/process_scale（会重写
+// 整个 scaled/ 目录）。它与下面的 startProcess() 逻辑几乎重复，只差一条进度文字，
+// 而「打开页面就写盘」正是 2026-09-13 误覆盖 671 个文件的直接原因（见版本历史）。
+// 现在写盘只发生在用户显式点击「处理」（startProcess）时，故整个函数移除；
+// 若将来需要「打开即处理」，请复用 startProcess 而不要恢复这条自动路径。
 
 function showEmptyState() {
     elements.emptyState.style.display = 'flex';

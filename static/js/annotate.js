@@ -500,17 +500,29 @@ async function loadOcrAnnotations(skipToast) {
         // 建 filename → 卡下标 映射
         // session 里 char 字段可能是 char_NNNN.png（原始切割）或
         // scaled_NNNN.png（缩放后）。OCR 标注存的 key 也是其中之一。
-        // 索引时同时认两种 fn，确保任意一种都能对得上。
-        const fnToIdx = {};
+        //
+        // 分两张表，**真键优先、假键只兜底**：
+        //   fnToIdx      真键——卡片自己声明过的 processed_filename / filename。
+        //                这是唯一权威的对应关系，绝不能被别的东西覆盖。
+        //   fnToIdxFallback 假键——把 scaled_NNNN 与 char_NNNN 按**编号互换**硬推出来的。
+        //                只给「标注重键失败」的老会话兜底用。
+        //
+        // ⚠️ 为什么必须分开（曾经踩过的坑）：真实数据里编号**不是一一对应**的
+        //（实测偏移量 +0～+18，因为中途有切图被删/跳过）。若把假键直接写进同一个表，
+        // 偏移非零的卡会用自己的假键覆盖掉另一张卡的真键 —— 后果是那张卡的标注
+        // 被「偷走」显示成空白，而偷走它的卡显示的是**别人的字**（字体语料里
+        // 这就是错的训练数据）。实测 810 条标注里有 9 条被这样指错。
+        const fnToIdx = {};          // 真键
+        const fnToIdxFallback = {};  // 假键（仅当真键查不到时才用）
         state.characters.forEach((c, i) => {
             for (const fn of [c.processed_filename, c.filename]) {
                 if (fn) fnToIdx[fn] = i;
             }
             if (c.processed_filename && c.processed_filename.startsWith('scaled_')) {
-                fnToIdx[c.processed_filename.replace(/^scaled_/, 'char_')] = i;
+                fnToIdxFallback[c.processed_filename.replace(/^scaled_/, 'char_')] = i;
             }
             if (c.filename && c.filename.startsWith('char_')) {
-                fnToIdx[c.filename.replace(/^char_/, 'scaled_')] = i;
+                fnToIdxFallback[c.filename.replace(/^char_/, 'scaled_')] = i;
             }
         });
         // 先恢复标注；繁体为空的卡收集起来，稍后一次批量转换
@@ -518,7 +530,10 @@ async function loadOcrAnnotations(skipToast) {
         let count = 0;
         for (const [filename, rec] of Object.entries(ocrAnnCache)) {
             if (!rec) continue;
-            const idx = fnToIdx[filename];
+            // 真键优先；查不到才退回编号互推的假键（老会话兼容）
+            const idx = fnToIdx[filename] !== undefined
+                ? fnToIdx[filename]
+                : fnToIdxFallback[filename];
             if (idx === undefined) continue;   // 记录对应卡不在当前列表（删除/改名），跳过
             const card = document.querySelector(`.char-card[data-index="${idx}"]`);
             if (!card) continue;

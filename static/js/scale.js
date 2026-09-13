@@ -123,14 +123,79 @@ async function loadCharacters() {
         showPreviewGrid();
         updateUI();
 
-        // 自动进行默认居中处理（v2 算法）
-        // 若磁盘上已有旧版 scaled_*.png，这里也会覆盖（用户刷新页面即自动迁移）
-        await autoProcess();
+        // 先把上次保存的参数还原到控件上，再自动处理。
+        // 否则自动处理会用「页面默认值」去覆盖磁盘上的 scaled 图 —— 例如保存时用的是
+        // 标点角对齐（bottom-left），一进页面就被默认的 center 重写掉。
+        const restored = data.scale_params ? applyScaleParams(data.scale_params) : true;
+
+        if (restored) {
+            // 自动处理（v2 算法）。注意 process_scale 现在会顺带落盘元数据，
+            // 所以这一步同时把「已缩放」写进会话，/annotate 才会用 scaled 图。
+            await autoProcess();
+        } else {
+            // 保存的参数里有本页没有对应控件的（如角对齐），自动处理必然用错参数覆盖，
+            // 于是**不自动跑**，交给用户显式点「处理」再决定。
+            // 但仍要渲染预览，否则网格是空的（autoProcess 正常路径里会渲染）
+            renderOriginalPreview();
+            console.warn('保存的缩放参数在本页无法完整还原，已跳过自动处理以避免覆盖',
+                data.scale_params);
+            showToast(`该批次保存时用的是「${data.scale_params.align}」对齐，本页没有对应选项，` +
+                      `已跳过自动处理以免覆盖已有结果；确认要重做请点「处理」`);
+        }
 
     } catch (error) {
         console.error('加载字符数据失败:', error);
         showEmptyState();
     }
+}
+
+/**
+ * 把会话里保存的缩放参数还原到页面控件上。
+ *
+ * 为什么需要：loadCharacters 会自动调 autoProcess，而它读的是**控件当前值**。
+ * 不先还原，页面默认值（居中、0.9 等）就会覆盖掉保存时的设置。
+ *
+ * @param {object} p 服务端返回的 scale_params（见 app.py 的 _get_scale_params）
+ * @returns {boolean} true = 参数已完整还原；false = 有参数在本页找不到对应控件，
+ *                    此时**不能**自动处理（否则必然用错参数覆盖，故调用方会跳过）
+ */
+function applyScaleParams(p) {
+    let ok = true;
+
+    if (typeof p.scale === 'number') {
+        const v = Math.round(p.scale * 100);
+        elements.scaleSlider.value = v;
+        elements.scaleValue.textContent = v + '%';
+    }
+    if (typeof p.fill_ratio === 'number') {
+        state.fillRatio = p.fill_ratio;
+        const v = Math.round(p.fill_ratio * 100);
+        elements.fillRatioSlider.value = v;
+        elements.fillRatioValue.textContent = v + '%';
+    }
+    if (typeof p.max_width_ratio === 'number') {
+        state.maxWidthRatio = p.max_width_ratio;
+        const v = Math.round(p.max_width_ratio * 100);
+        elements.maxWidthRatioSlider.value = v;
+        elements.maxWidthRatioValue.textContent = v + '%';
+    }
+
+    // 单选框：本页只有 center / top / baseline 三种对齐，没有角对齐
+    //（top-left / top-right / bottom-left / bottom-right —— 那是给标点贴角用的）。
+    // 保存的值若不在本页选项里，就**一个都不勾**并返回 false，让调用方跳过自动处理。
+    const al = document.querySelector(`input[name="align"][value="${p.align}"]`);
+    if (al) {
+        al.checked = true;
+    } else {
+        ok = false;
+    }
+    const bg = document.querySelector(`input[name="background"][value="${p.background}"]`);
+    if (bg) {
+        bg.checked = true;
+    } else {
+        ok = false;
+    }
+    return ok;
 }
 
 // 自动处理（页面加载时使用默认参数；v2 = 高度归一）

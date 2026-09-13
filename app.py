@@ -778,8 +778,35 @@ def get_cut_results(image_hash):
     return jsonify({
         'success': True,
         'characters': characters,
-        'image_hash': image_hash
+        'image_hash': image_hash,
+        # 该批次上次保存的缩放参数（没保存过则为 None）。
+        # 前端 /scale 的 loadCharacters 拿它把控件还原成保存时的状态，再自动处理——
+        # 否则自动处理会用页面默认值（居中）覆盖掉保存时的设置（比如标点的角对齐）。
+        'scale_params': _get_scale_params(session_data),
     })
+
+
+def _get_scale_params(session_data):
+    """取出会话里保存的缩放参数；从未保存过则返回 None（调用方自行用默认值）
+
+    注意这里一律用 `or 默认值`，**不能**用 `dict.get(key, 默认值)`：
+    老版本保存的会话里字段可能是**存在但值为 None**（例如 f00b3270 的
+    scale_align=None —— 那时还没存这个字段），get 只在「键不存在」时才给默认值，
+    值为 None 时会原样返回 None。前端拿到 align=None 会去找
+    `input[name="align"][value="null"]`，找不到就判定「参数无法还原」并跳过
+    自动处理 —— 整个 /scale 页面就变成不干活了。
+    这几个参数都不存在合法的 0 值，所以用 or 是安全的。
+    """
+    if not session_data or not session_data.get('scale_processed'):
+        return None
+    return {
+        'scale': session_data.get('scale_height_multiplier') or 1.0,
+        'fill_ratio': session_data.get('scale_fill_ratio') or 0.9,
+        'max_width_ratio': session_data.get('scale_max_width_ratio') or 0.95,
+        'align': session_data.get('scale_align') or 'center',
+        'background': session_data.get('scale_background') or 'black',
+        'algorithm_version': session_data.get('scale_algorithm_version'),
+    }
 
 
 @app.route('/api/clear_empty_chars', methods=['POST'])
@@ -1252,7 +1279,15 @@ def process_scale():
                 traceback.print_exc()
                 continue
 
-        # 把算法版本写入 session（让 /api/save_scaled 知道是否需要重跑）
+        # 落盘元数据（scaled_characters + 参数 + 算法版本）。
+        # 图片在上面已经写进 scaled/ 了，元数据不跟着写就会两头不一致：
+        # /annotate 会走 characters 兜底去显示切割图，明明缩放过了却看不见效果。
+        # 只在确实产出了字符时才写，避免「全部处理失败」把已有元数据清空。
+        if processed_characters:
+            session_data = load_session(image_hash, DATA_FOLDER) or {}
+            _persist_scale_metadata(session_data, image_hash, processed_characters,
+                                    scale, fill_ratio, max_width_ratio, align, background)
+
         return jsonify({
             'success': True,
             'characters': processed_characters,
@@ -1385,6 +1420,47 @@ def rescale_char(image_hash):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def _persist_scale_metadata(session_data, image_hash, characters,
+                            scale, fill_ratio, max_width_ratio, align, background):
+    """
+    把「这个批次已经做过缩放校正」写进会话元数据并落盘。
+
+    写的内容（两处调用点必须一致，故抽成函数）：
+      - scaled_characters：每项 = 原切图 filename → scaled 图 processed_filename
+        + processed_url。**/annotate 判断用不用 scaled 图看的就是这个列表非空否**
+        （见 get_scaled_results：空则回退 characters，于是显示切割图）。
+      - scale_*：本次的参数 + 算法版本，供下次进 /scale 时还原控件、
+        以及算法升级时的重生成判断。
+
+    为什么要有这个函数：写盘图片的是 /api/process_scale（打开 /scale 页面就自动跑），
+    而以前只有 /api/save_scaled（要点「保存」按钮）才写元数据 —— 于是「只打开过
+    /scale、没点保存」的批次会处于「磁盘有图、元数据说没缩放过」的中间状态，
+    /annotate 一直显示切割图，用户以为缩放白做了。现在两个入口都落盘。
+
+    参数:
+        session_data: 已加载的会话 dict（就地修改，调用方负责 save_session）
+        image_hash:   会话标识
+        characters:   本次处理产出的缩放字符列表（形如 process_scale 的 processed_characters）
+        scale / fill_ratio / max_width_ratio / align / background: 本次处理参数
+
+    返回:
+        bool，save_session 是否成功
+    """
+    # ALGORITHM_VERSION 在本文件里是各函数内局部 import 的（不走模块全局），
+    # 所以这里也得自己 import 一次
+    from utils.scale_processor import ALGORITHM_VERSION
+
+    session_data['scaled_characters'] = characters
+    session_data['scale_processed'] = True
+    session_data['scale_algorithm_version'] = ALGORITHM_VERSION
+    session_data['scale_height_multiplier'] = scale
+    session_data['scale_fill_ratio'] = fill_ratio
+    session_data['scale_max_width_ratio'] = max_width_ratio
+    session_data['scale_align'] = align
+    session_data['scale_background'] = background
+    return save_session(image_hash, session_data, DATA_FOLDER)
+
+
 @app.route('/api/save_scaled', methods=['POST'])
 def save_scaled():
     """保存缩放校正结果
@@ -1422,7 +1498,9 @@ def save_scaled():
     target_size = int(data.get('target_size', 512))
 
     # === 自动重生成：旧版本算法 → 用新算法重跑所有字符 ===
-    old_version = int(session_data.get('scale_algorithm_version', 1))
+    # 用 `or 1` 而不是 get 的默认值：老会话里这个键可能「存在但为 None」
+    # （实测 f00b3270），int(None) 会抛 TypeError → 保存直接 500
+    old_version = int(session_data.get('scale_algorithm_version') or 1)
     need_regenerate = old_version < ALGORITHM_VERSION
     regenerated_count = 0
 
@@ -1475,17 +1553,9 @@ def save_scaled():
         characters = new_processed
         print(f"save_scaled 自动重生成：{image_hash}, v{old_version} → v{ALGORITHM_VERSION}, {regenerated_count} 个字符")
 
-    # 保存缩放校正数据 + 算法版本
-    session_data['scaled_characters'] = characters
-    session_data['scale_processed'] = True
-    session_data['scale_algorithm_version'] = ALGORITHM_VERSION
-    # 把参数也存下来，下次 save_scaled 重生成时能拿到（前端可能不重传）
-    session_data['scale_height_multiplier'] = scale
-    session_data['scale_fill_ratio'] = fill_ratio
-    session_data['scale_max_width_ratio'] = max_width_ratio
-    session_data['scale_align'] = align
-    session_data['scale_background'] = background
-    save_session(image_hash, session_data, DATA_FOLDER)
+    # 保存缩放校正数据 + 算法版本（与 /api/process_scale 共用同一函数，避免两处漂移）
+    _persist_scale_metadata(session_data, image_hash, characters,
+                            scale, fill_ratio, max_width_ratio, align, background)
 
     return jsonify({
         'success': True,

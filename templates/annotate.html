@@ -593,7 +593,16 @@
 .card-search-tip {
     position: absolute;
     top: calc(100% + 4px);
-    right: 30px;
+    /* 锚在搜索栏的**左边缘**（原来是 right: 30px 锚在右边缘）。
+       原因：气泡 min-width 320px，而搜索栏换行到行首时只离屏幕左边 20px
+       （.toolbar 的 padding-left），往左一伸就探出屏幕 —— 实测 1366/1440/1600
+       三个宽度下气泡左边缘都是 -50px，左边 50px 被屏幕裁掉（「用法」标题、
+       第一列码位全被切）。
+       改锚左边缘后，气泡左边缘恒等于搜索栏左边缘 ≥ 20px，绝不会探出屏幕；
+       同时气泡右边缘最多到 420+320=740px（最窄的 900px 视口下也不会向右溢出）。
+       绝对定位的元素不会给文档产生横向滚动，所以探出去的部分是**被裁掉**而非可滚动，
+       必须从锚点这里根治。 */
+    left: 0;
     background: #fff;
     border: 1px solid #ccc;
     border-radius: 6px;

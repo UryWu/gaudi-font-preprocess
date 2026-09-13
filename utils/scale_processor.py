@@ -21,12 +21,32 @@ from typing import Tuple, Optional
 
 # 算法版本号：scale_char 行为变更时 +1
 # /api/save_scaled 看到 session.version < 当前值就主动重跑所有字符
+#
+# ⚠️ 2026-09-13 的包围盒修复（detect_char_bbox 去腐蚀，不再切掉墨迹边缘）
+#    **故意没有 +1**：用户当时正在手工整理 scaled/ 目录，一升版本号下次点「保存」
+#    就会按新算法把全部字符重生成、覆盖他的手工成果。
+#    所以 v2 目前同时代表两种略有差异的行为：
+#      v2-旧：包围盒带腐蚀 → 每个字都切掉一点墨（切墨中位 2.8%、最大 30.6%）
+#      v2-新：包围盒精确 → 807/821 一个字都不切，其余只丢 1~2 像素噪点
+#    要区分二者只能比对产物（例如看墨迹是否贴合裁切框），版本号本身分不出来。
+#    若将来需要强制全体重生成，把这里 +1 即可。
 ALGORITHM_VERSION = 2
 
 
 def detect_char_bbox(image: np.ndarray) -> Tuple[int, int, int, int]:
     """
-    检测字符的边界框
+    检测字符的边界框（精确覆盖全部墨迹，不切边）
+
+    算法变更（2026-09-13）：原实现是「先 3×3 腐蚀 → 阈值 127 → 找轮廓」。
+    腐蚀会把抗锯齿/较淡的笔画压到 127 以下而**整条消失**，于是包围盒比真实墨迹
+    小一圈，裁到它就把字最外圈的笔画切掉了。实测某会话 821 个字**无一例外**全部
+    中招（切墨中位 2.8%、最大 30.6%）。
+
+    现在改为：纯阈值求墨迹 → 连通域按像素数剔除极小噪点 → 取联合包围盒。
+    腐蚀原本想解决的「去噪点」改由连通域过滤承担，不再误伤笔画。
+
+    为什么用连通域像素数而不是 cv2.contourArea：contourArea 量的是「围起来的
+    面积」，一条 1 像素宽的细笔画围出的面积接近 0，会被误判成噪点丢掉。
 
     Args:
         image: 输入图片（二值图，黑底白字）
@@ -43,24 +63,27 @@ def detect_char_bbox(image: np.ndarray) -> Tuple[int, int, int, int]:
     else:
         gray = image.copy()
 
-    # 边缘腐蚀 - 去除边缘噪点
-    kernel = np.ones((3, 3), np.uint8)
-    eroded = cv2.erode(gray, kernel, iterations=1)
+    # 二值化：纯阈值，**不腐蚀**（腐蚀正是「切边」的元凶）
+    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
 
-    # 二值化
-    _, binary = cv2.threshold(eroded, 127, 255, cv2.THRESH_BINARY)
-
-    # 查找轮廓
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if not contours:
+    # 连通域统计（connectivity=8：斜向相接的笔画算同一块）
+    # stats 的第 4 列是该连通域的**像素数**（不是围起来的面积）
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    if n <= 1:
+        # 只有背景 → 没有墨迹；沿用原行为「整图当包围盒」
         return 0, 0, gray.shape[1], gray.shape[0]
 
-    # 计算所有轮廓的联合边界框
-    all_points = np.vstack(contours)
-    x, y, w, h = cv2.boundingRect(all_points)
+    areas = stats[1:, 4]
+    # 去噪点：丢掉「不足 4 像素」或「不到最大连通域 0.5%」的孤立小块。
+    # 用相对阈值是为了适配不同分辨率；0.5% 既足以滤掉噪点，又不会误删真笔画
+    keep = [i + 1 for i, a in enumerate(areas) if a >= max(4, areas.max() * 0.005)]
+    if not keep:
+        keep = [1 + int(np.argmax(areas))]
 
-    return x, y, w, h
+    ys, xs = np.where(np.isin(labels, keep))
+    x0, y0 = int(xs.min()), int(ys.min())
+    x1, y1 = int(xs.max()), int(ys.max())
+    return x0, y0, x1 - x0 + 1, y1 - y0 + 1
 
 
 def center_char_in_canvas(

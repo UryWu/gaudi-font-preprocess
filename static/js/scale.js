@@ -111,8 +111,17 @@ async function loadCharacters() {
             return;
         }
 
-        // 过滤掉已删除和空字符，然后按传统顺序排序
-        const filteredChars = data.characters.filter(c => !c.deleted && !c.is_empty);
+        // 只过滤「已删除」的，**保留被判为空白（is_empty）的字符**，然后按传统顺序排序。
+        //
+        // 为什么不再过滤 is_empty：is_empty 只是切割阶段的**自动判断**（见
+        // empty_detector.detect_empty_slice），并不代表用户想丢掉它。以前这里把
+        // 空字符滤掉，用户从 /adjust 切到 /scale 会发现那些图"不见了"，看起来像被
+        // 自动删除——而用户并没有点过 /adjust 的「一键清除空白字符」。
+        // 是否清除空白**只能由用户显式操作**（/adjust 的清除按钮），加载页面不得代为决定。
+        //
+        // 注意：保留 is_empty 的字符意味着它们也会进入处理/保存流程，
+        // 即空切片也会生成一张 512x512 的输出图（全黑），与用户"保留"的意图一致。
+        const filteredChars = data.characters.filter(c => !c.deleted);
         state.characters = getTraditionalOrder(filteredChars);
 
         if (state.characters.length === 0) {
@@ -161,7 +170,11 @@ async function previewExistingScaled() {
     try {
         const r = await fetch(`/api/get_scaled_results/${state.imageHash}`);
         const d = await r.json();
-        const chars = (d.characters || []).filter(c => c.processed_url && !c.is_empty);
+        // 口径与上面的 loadCharacters 一致：**不过滤 is_empty**。
+        // 这里原先带 `&& !c.is_empty`，会让"保留空白字符"的效果在刷新后又失效——
+        // 处理完的空白切片要么被滤掉（用户又看到图少了），要么永远进不了预览。
+        // 只保留"确实有已处理结果（processed_url）"这一个条件。
+        const chars = (d.characters || []).filter(c => c.processed_url);
         if (d.success && chars.length > 0) {
             state.processedCharacters = chars;
             state.isProcessed = true;
@@ -264,7 +277,10 @@ function renderOriginalPreview() {
 // 创建预览卡片
 function createPreviewCard(char, index) {
     const card = document.createElement('div');
-    card.className = 'preview-card';
+    // 空白切片加 .is-empty 标记（样式见 scale.html）：
+    // 现在保留它们进入流程，但预览图是一张全黑图、与"字没写出来"无法区分，
+    // 所以给个角标提示"这张被自动判为空白"，要不要清由用户到 /adjust 决定
+    card.className = 'preview-card' + (char.is_empty ? ' is-empty' : '');
 
     const number = document.createElement('div');
     number.className = 'preview-number';
@@ -276,6 +292,15 @@ function createPreviewCard(char, index) {
 
     card.appendChild(number);
     card.appendChild(img);
+
+    if (char.is_empty) {
+        const badge = document.createElement('div');
+        badge.className = 'preview-empty-badge';
+        badge.textContent = '空白';
+        badge.title = `此切片被自动判为空白（text_ratio=${char.text_ratio ?? '?'}）。` +
+                      `已保留，如需清除请到「切割调整」页操作`;
+        card.appendChild(badge);
+    }
 
     return card;
 }
@@ -333,7 +358,8 @@ function renderProcessedPreview(characters) {
 
     characters.forEach((char, index) => {
         const card = document.createElement('div');
-        card.className = 'preview-card';
+        // 空白切片的标记与 createPreviewCard 保持一致（保留但标出来）
+        card.className = 'preview-card' + (char.is_empty ? ' is-empty' : '');
 
         const number = document.createElement('div');
         number.className = 'preview-number';
@@ -345,6 +371,14 @@ function renderProcessedPreview(characters) {
 
         card.appendChild(number);
         card.appendChild(img);
+
+        if (char.is_empty) {
+            const badge = document.createElement('div');
+            badge.className = 'preview-empty-badge';
+            badge.textContent = '空白';
+            card.appendChild(badge);
+        }
+
         elements.previewGrid.appendChild(card);
     });
 }

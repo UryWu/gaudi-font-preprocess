@@ -310,6 +310,25 @@
     z-index: 1;
 }
 
+/* 被判为空白（is_empty）的切片：保留在列表里，但标出来让人分得清。
+   它们处理完也是一张全黑图，不标的话与"字没写出来"无法区分。 */
+.preview-card.is-empty {
+    outline: 2px dashed #C99A8E;   /* 莫兰迪浅珊瑚，与「清理过程图」同一个警示色 */
+    outline-offset: -2px;
+}
+
+.preview-empty-badge {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background-color: rgba(201, 154, 142, 0.92);
+    color: white;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    z-index: 1;
+}
+
 /* 空状态 */
 .empty-state-scale {
     display: flex;
@@ -445,5 +464,5 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/common.js') }}?v=3"></script>
-<script src="{{ url_for('static', filename='js/scale.js') }}?v=7"></script>
+<script src="{{ url_for('static', filename='js/scale.js') }}?v=8"></script>
 {% endblock %}
